@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #090A0F;
+  --surface: #12141C;
+  --surface-elevated: #1A1D27;
+}
+
+/* Standalone iOS PWA styling optimizations */
+html, body {
+  background-color: #090A0F;
+  color: #FFFFFF;
+  overscroll-behavior-y: none; /* Disables rubber-banding in standalone PWA */
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Safe area support for iPhone Dynamic Island and Home Bar */
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom, 16px), 16px);
+}
+
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top, 16px), 16px);
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #12141C;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #262A38;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #3A4056;
+}

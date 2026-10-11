@@ -1,0 +1,43 @@
+{
+  "name": "ReboundFit - Lean Bulk & Recomp",
+  "short_name": "ReboundFit",
+  "description": "Zero-friction fitness, dynamic TDEE, and progressive overload tracking.",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#090A0F",
+  "theme_color": "#090A0F",
+  "categories": ["fitness", "health", "lifestyle"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Log Weigh-In",
+      "url": "/?action=weigh-in",
+      "description": "Quick morning weigh-in logger"
+    },
+    {
+      "name": "Quick Calorie Dial",
+      "url": "/food?action=quick-dial",
+      "description": "Log calories and protein in 3 seconds"
+    },
+    {
+      "name": "Start Workout",
+      "url": "/lift",
+      "description": "Log progressive overload workout"
+    }
+  ]
+}
