@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { useCloudSync } from "@/hooks/useCloudSync";
 import { db, LocalMealLog } from "@/lib/db";
 import {
   Flame,
@@ -29,6 +30,7 @@ const MEAL_CATEGORIES: { type: LocalMealLog["mealType"]; label: string; icon: an
 
 export default function NutritionPage() {
   const { user, profile } = useAuth();
+  const { saveMealLog, deleteMealLog } = useCloudSync();
   const [meals, setMeals] = useState<LocalMealLog[]>([]);
   const [timeRange, setTimeRange] = useState<"day" | "week" | "month">("day");
   const [isLogModalOpen, setIsLogModalOpen] = useState<boolean>(false);
@@ -43,7 +45,7 @@ export default function NutritionPage() {
 
   const todayStr = new Date().toISOString().split("T")[0];
 
-  const loadMeals = async () => {
+  const loadMeals = useCallback(async () => {
     if (!user) return;
     const todayMeals = await db.mealLogs
       .where("userId")
@@ -51,11 +53,20 @@ export default function NutritionPage() {
       .and((m) => m.date === todayStr)
       .toArray();
     setMeals(todayMeals);
-  };
+  }, [user, todayStr]);
 
   useEffect(() => {
     loadMeals();
-  }, [user]);
+
+    const handleSync = () => {
+      loadMeals();
+    };
+
+    window.addEventListener("reboundfit_sync", handleSync);
+    return () => {
+      window.removeEventListener("reboundfit_sync", handleSync);
+    };
+  }, [loadMeals]);
 
   // Aggregate Totals
   const totalCalories = meals.reduce((sum, m) => sum + m.calories, 0);
@@ -71,51 +82,48 @@ export default function NutritionPage() {
   const calorieDelta = targetCalories - totalCalories;
   const caloriePercent = Math.min(100, Math.round((totalCalories / targetCalories) * 100));
 
-  // Quick 1-Tap Preset Add
-  const handleQuickAdd = async (name: string, cal: number, pro: number, carbs: number, fat: number, type: LocalMealLog["mealType"] = "snack") => {
+  // Quick 1-Tap Preset Add with Cloud Realtime Sync
+  const handleQuickAdd = async (
+    name: string,
+    cal: number,
+    pro: number,
+    carbs: number,
+    fat: number,
+    type: LocalMealLog["mealType"] = "snack"
+  ) => {
     if (!user) return;
-    const newMeal: LocalMealLog = {
-      id: `meal-${user.id}-${Date.now()}`,
-      userId: user.id,
-      date: todayStr,
-      mealType: type,
+    await saveMealLog({
       name,
+      mealType: type,
       calories: cal,
       proteinG: pro,
       carbG: carbs,
       fatG: fat,
       isQuickDial: true,
-      synced: false,
-      createdAt: new Date().toISOString(),
-    };
-    await db.mealLogs.put(newMeal);
+      date: todayStr,
+    });
     await loadMeals();
   };
 
   const handleSaveMeal = async () => {
     if (!user) return;
-    const newMeal: LocalMealLog = {
-      id: `meal-${user.id}-${Date.now()}`,
-      userId: user.id,
-      date: todayStr,
-      mealType,
+    await saveMealLog({
       name: mealName.trim() || `${mealType.charAt(0).toUpperCase() + mealType.slice(1)} Meal`,
+      mealType,
       calories,
       proteinG,
       carbG,
       fatG,
       isQuickDial: false,
-      synced: false,
-      createdAt: new Date().toISOString(),
-    };
-    await db.mealLogs.put(newMeal);
+      date: todayStr,
+    });
     await loadMeals();
     setIsLogModalOpen(false);
     setMealName("");
   };
 
   const handleDeleteMeal = async (id: string) => {
-    await db.mealLogs.delete(id);
+    await deleteMealLog(id);
     await loadMeals();
   };
 

@@ -66,6 +66,15 @@ export default function BodyMeasurementsPage() {
 
   useEffect(() => {
     loadBodyData();
+
+    const handleSync = () => {
+      loadBodyData();
+    };
+
+    window.addEventListener("reboundfit_sync", handleSync);
+    return () => {
+      window.removeEventListener("reboundfit_sync", handleSync);
+    };
   }, [user, profile]);
 
   const latestTrendPoint = trendData[trendData.length - 1] || {

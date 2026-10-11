@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { useCloudSync } from "@/hooks/useCloudSync";
 import { db, LocalExercise, LocalWorkoutSet, LocalScheduledWorkout } from "@/lib/db";
 import {
   Dumbbell,
@@ -50,6 +51,7 @@ interface ActiveExerciseState {
 
 export default function WorkoutsPage() {
   const { user, profile } = useAuth();
+  const { saveWorkoutSet } = useCloudSync();
   const [activeTab, setActiveTab] = useState<"session" | "schedule">("session");
   const [exercises, setExercises] = useState<LocalExercise[]>([]);
   const [routineName, setRoutineName] = useState<string>("Workout Session");
@@ -302,9 +304,7 @@ export default function WorkoutsPage() {
         }
       }
 
-      const workoutSetRecord: LocalWorkoutSet = {
-        id: `set-${user.id}-${Date.now()}-${targetSet.setNumber}`,
-        userId: user.id,
+      await saveWorkoutSet({
         workoutId: `session-${selectedDate}`,
         exerciseId: nextExercises[exIndex].exercise.id,
         setNumber: targetSet.setNumber,
@@ -312,9 +312,7 @@ export default function WorkoutsPage() {
         reps: targetSet.reps,
         isWarmup: false,
         isPr: targetSet.isPr,
-        synced: false,
-      };
-      await db.workoutSets.put(workoutSetRecord);
+      });
 
       try {
         if (scheduledDay && !scheduledDay.isCompleted) {

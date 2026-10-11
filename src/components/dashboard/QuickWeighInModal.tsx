@@ -2,9 +2,8 @@
 
 import React, { useState } from "react";
 import { X, Scale, Check, Plus, Minus } from "lucide-react";
-import { db } from "@/lib/db";
 import { useAuth } from "@/context/AuthContext";
-import { calculateWeightTrend } from "@/algorithms/weightTrend";
+import { useCloudSync } from "@/hooks/useCloudSync";
 
 interface QuickWeighInModalProps {
   isOpen: boolean;
@@ -20,6 +19,7 @@ export function QuickWeighInModal({
   onWeightLogged,
 }: QuickWeighInModalProps) {
   const { user } = useAuth();
+  const { saveWeighIn } = useCloudSync();
   const [weight, setWeight] = useState<number>(lastWeightLbs || 175.0);
   const [unit, setUnit] = useState<"lbs" | "kg">("lbs");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -38,44 +38,12 @@ export function QuickWeighInModal({
       const weightLbs = unit === "lbs" ? weight : Number((weight / 0.45359237).toFixed(1));
       const weightKg = unit === "kg" ? weight : Number((weight * 0.45359237).toFixed(1));
 
-      const existing = await db.weighIns.where("userId").equals(user.id).toArray();
-      const updatedList = [
-        ...existing.filter((w) => w.date !== today),
-        {
-          id: `weigh-${user.id}-${today}`,
-          userId: user.id,
-          date: today,
-          rawWeightLbs: weightLbs,
-          rawWeightKg: weightKg,
-          synced: false,
-          createdAt: new Date().toISOString(),
-        },
-      ];
-
-      const smoothed = calculateWeightTrend(
-        updatedList.map((w) => ({ date: w.date, rawWeightLbs: w.rawWeightLbs }))
-      );
-      const latestSmoothed = smoothed.find((s) => s.date === today);
-
-      await db.weighIns.put({
-        id: `weigh-${user.id}-${today}`,
-        userId: user.id,
+      await saveWeighIn({
         date: today,
         rawWeightLbs: weightLbs,
         rawWeightKg: weightKg,
-        trendWeightLbs: latestSmoothed?.trendWeightLbs ?? weightLbs,
-        rateOfGainLbsPerWeek: latestSmoothed?.rateOfGainLbsPerWeek ?? 0,
-        synced: false,
-        createdAt: new Date().toISOString(),
+        notes: "Morning Scale Weigh-In",
       });
-
-      const profile = await db.profiles.where("userId").equals(user.id).first();
-      if (profile) {
-        await db.profiles.update(profile.id, {
-          currentWeightLbs: weightLbs,
-          updatedAt: new Date().toISOString(),
-        });
-      }
 
       onWeightLogged();
       onClose();

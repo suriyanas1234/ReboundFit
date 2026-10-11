@@ -1,28 +1,33 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
+import { useCloudSync } from "@/hooks/useCloudSync";
 import { db, LocalWeighIn, LocalMealLog, LocalScheduledWorkout } from "@/lib/db";
 import { calculateWeightTrend, SmoothedWeightPoint } from "@/algorithms/weightTrend";
 import { getOrCreateScheduledWorkoutForDate } from "@/algorithms/workoutScheduler";
 import { QuickWeighInModal } from "@/components/dashboard/QuickWeighInModal";
+import { NutritionCard } from "@/components/dashboard/NutritionCard";
+import { WeightTrendCard } from "@/components/dashboard/WeightTrendCard";
+import { WorkoutCard } from "@/components/dashboard/WorkoutCard";
+import { WeightTrendChart } from "@/components/dashboard/WeightTrendChart";
+import { DualProgressRings } from "@/components/dashboard/DualProgressRings";
 import {
   Flame,
   Dumbbell,
   Scale,
-  UtensilsCrossed,
-  ChevronRight,
   Plus,
-  Play,
-  ArrowUpRight,
-  Coffee,
-  CheckCircle2,
-  Calendar,
+  RefreshCw,
+  Sparkles,
+  TrendingUp,
+  LayoutDashboard,
 } from "lucide-react";
 
 export default function SummaryPage() {
   const { user, profile } = useAuth();
+  const { isSyncing, syncNow } = useCloudSync();
+
   const [trendData, setTrendData] = useState<SmoothedWeightPoint[]>([]);
   const [todayMeals, setTodayMeals] = useState<LocalMealLog[]>([]);
   const [todayWorkout, setTodayWorkout] = useState<LocalScheduledWorkout | null>(null);
@@ -31,7 +36,7 @@ export default function SummaryPage() {
 
   const todayStr = new Date().toISOString().split("T")[0]; // "2026-10-11"
 
-  const loadSummaryData = async () => {
+  const loadSummaryData = useCallback(async () => {
     if (!user) return;
     try {
       // 1. Fetch Weigh-Ins & Calculate Trend
@@ -83,11 +88,22 @@ export default function SummaryPage() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user, profile, todayStr]);
 
+  // Initial load & real-time sync listener
   useEffect(() => {
     loadSummaryData();
-  }, [user, profile]);
+
+    // Listen for cross-device cloud sync events
+    const handleSyncEvent = () => {
+      loadSummaryData();
+    };
+
+    window.addEventListener("reboundfit_sync", handleSyncEvent);
+    return () => {
+      window.removeEventListener("reboundfit_sync", handleSyncEvent);
+    };
+  }, [loadSummaryData]);
 
   // Macro Totals
   const consumedCalories = todayMeals.reduce((acc, m) => acc + m.calories, 0);
@@ -97,11 +113,8 @@ export default function SummaryPage() {
 
   const targetCalories = profile?.targetCalories || 2600;
   const targetProtein = profile?.targetProteinG || 160;
-
-  // Calorie & Protein Progress Percentages
-  const caloriePercent = Math.min(100, Math.round((consumedCalories / targetCalories) * 100));
-  const proteinPercent = Math.min(100, Math.round((consumedProtein / targetProtein) * 100));
-  const calorieRemainder = targetCalories - consumedCalories;
+  const targetCarbs = profile?.targetCarbG || 315;
+  const targetFat = profile?.targetFatG || 74;
 
   const latestTrendPoint = trendData[trendData.length - 1] || {
     rateOfGainLbsPerWeek: 0,
@@ -118,274 +131,132 @@ export default function SummaryPage() {
   const userInitial = user?.name ? user.name.charAt(0).toUpperCase() : "A";
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 sm:space-y-8 animate-fade-in pb-8">
       {/* =========================================================================
           APPLE HEALTH LARGE TITLE HEADER
           Eyebrow Date, Massive Title: "Summary", Profile Avatar Pinned Top-Right
           ========================================================================= */}
-      <header className="flex items-end justify-between pt-2 pb-1">
+      <header className="flex items-end justify-between pt-1 pb-2">
         <div>
           <span className="text-xs font-semibold uppercase tracking-wider text-[#8E8E93] block">
             {formattedEyebrowDate}
           </span>
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white mt-0.5">
+          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white mt-1">
             Summary
           </h1>
         </div>
 
-        {/* Circular Profile Avatar */}
-        <div className="w-9 h-9 rounded-full bg-[#2C2C2E] border border-[#38383A] flex items-center justify-center font-bold text-xs text-white shadow-md">
-          {userInitial}
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => syncNow()}
+            disabled={isSyncing}
+            className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#1C1C1E] border border-[#38383A] text-xs font-semibold text-[#8E8E93] hover:text-white transition-all"
+            title="Sync Cloud Data"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-[#0A84FF]" : ""}`} />
+            <span>{isSyncing ? "Syncing..." : "Sync"}</span>
+          </button>
+
+          {/* Circular Profile Avatar */}
+          <div className="w-10 h-10 rounded-full bg-[#2C2C2E] border border-[#38383A] flex items-center justify-center font-bold text-sm text-white shadow-md">
+            {userInitial}
+          </div>
         </div>
       </header>
 
       {/* =========================================================================
-          FAVORITES SECTION HEADER (Apple Health HIG)
+          FAVORITES SECTION (Responsive: Mobile Single-Column vs Desktop 3-Column Grid)
           ========================================================================= */}
-      <div className="flex items-center justify-between pt-1">
-        <h2 className="text-lg font-bold text-white tracking-tight">Favorites</h2>
-        <button
-          onClick={() => setIsWeighInOpen(true)}
-          className="text-xs font-semibold text-[#0A84FF] hover:underline"
-        >
-          + Log Metric
-        </button>
-      </div>
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">Favorites</h2>
+            <span className="px-2 py-0.5 rounded-full bg-[#2C2C2E] text-[10px] font-mono text-[#8E8E93]">
+              LIVE
+            </span>
+          </div>
+
+          <button
+            onClick={() => setIsWeighInOpen(true)}
+            className="text-xs font-semibold text-[#0A84FF] hover:underline flex items-center space-x-1"
+          >
+            <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+            <span>Log Metric</span>
+          </button>
+        </div>
+
+        {/* Responsive Grid: Mobile 1 column, Desktop 2 or 3 columns */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-5">
+          {/* Card 1: Nutrition & Macro Intake */}
+          <NutritionCard
+            consumedCalories={consumedCalories}
+            targetCalories={targetCalories}
+            consumedProtein={consumedProtein}
+            targetProtein={targetProtein}
+            consumedCarbs={consumedCarbs}
+            consumedFat={consumedFat}
+            targetCarbs={targetCarbs}
+            targetFat={targetFat}
+          />
+
+          {/* Card 2: Weight Trend & Sparkline */}
+          <WeightTrendCard
+            trendWeightLbs={latestTrendPoint.trendWeightLbs}
+            rateOfGainLbsPerWeek={latestTrendPoint.rateOfGainLbsPerWeek}
+            targetGainRateLbsPerWeek={profile?.targetGainRateLbsPerWeek || 0.35}
+            trendData={trendData}
+            gainZone={latestTrendPoint.gainZone}
+            onOpenWeighIn={() => setIsWeighInOpen(true)}
+          />
+
+          {/* Card 3: Workout Today Snapshot */}
+          <div className="md:col-span-2 lg:col-span-1">
+            <WorkoutCard workout={todayWorkout} />
+          </div>
+        </div>
+      </section>
 
       {/* =========================================================================
-          FAVORITES HEALTH METRIC CARDS (Apple Health Category Accents)
+          DESKTOP DUAL-PANE ANALYTICAL DASHBOARD (Tablets & Desktop Breakpoints)
+          Left: Interactive Weight Trend Curve / Right: Apple Fitness Progress Rings
           ========================================================================= */}
-      <div className="space-y-3.5">
-        {/* CARD 1: ACTIVE ENERGY / CALORIC SURPLUS (#FF9500 Flame Orange) */}
-        <Link
-          href="/food"
-          className="block p-4 rounded-[20px] bg-[#1C1C1E] border border-[#2C2C2E]/60 hover:border-[#38383A] transition-all active:scale-[0.99] shadow-lg"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center space-x-2">
-              <div className="w-7 h-7 rounded-lg bg-[#FF9500]/20 text-[#FF9500] flex items-center justify-center">
-                <Flame className="w-4 h-4 fill-current" />
-              </div>
-              <span className="text-xs font-semibold text-[#FF9500] tracking-wide">
-                Active Energy / Surplus
-              </span>
-            </div>
-            <div className="flex items-center space-x-1 text-[#8E8E93] text-xs font-mono">
-              <span>TODAY</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </div>
+      <section className="space-y-4 pt-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <LayoutDashboard className="w-4 h-4 text-[#0A84FF]" />
+            <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+              Analytical Deep-Dive
+            </h2>
           </div>
+          <span className="text-xs text-[#8E8E93] font-mono hidden sm:inline">
+            7-Day Exponential Moving Average
+          </span>
+        </div>
 
-          <div className="flex items-baseline justify-between mt-2">
-            <div>
-              <span className="text-3xl font-extrabold text-white tracking-tight font-sans">
-                {consumedCalories.toLocaleString()}
-              </span>
-              <span className="text-sm font-semibold text-[#8E8E93] ml-1.5">
-                / {targetCalories.toLocaleString()} kcal
-              </span>
-            </div>
-            <span className="text-xs font-semibold text-[#8E8E93] font-mono">
-              {caloriePercent}%
-            </span>
-          </div>
-
-          {/* Apple Health Activity Bar Gauge */}
-          <div className="w-full h-2 rounded-full bg-[#2C2C2E] overflow-hidden mt-3">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-[#FF9500] to-[#FFD60A] transition-all duration-500"
-              style={{ width: `${caloriePercent}%` }}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+          {/* Left Pane: Interactive Weight Trend Chart (2 Columns on large screens) */}
+          <div className="lg:col-span-2">
+            <WeightTrendChart
+              data={trendData}
+              onOpenWeighIn={() => setIsWeighInOpen(true)}
             />
           </div>
 
-          <div className="flex items-center justify-between text-xs text-[#8E8E93] mt-2.5">
-            <span>
-              {calorieRemainder > 0
-                ? `${calorieRemainder.toLocaleString()} kcal remaining for surplus`
-                : `+${Math.abs(calorieRemainder).toLocaleString()} kcal surplus exceeded`}
-            </span>
-            <span className="text-[11px] font-mono text-gray-400">
-              Carbs: {consumedCarbs}g • Fat: {consumedFat}g
-            </span>
-          </div>
-        </Link>
-
-        {/* CARD 2: PROTEIN INTAKE (#FF2D55 Hot Pink / Activity Red) */}
-        <Link
-          href="/food"
-          className="block p-4 rounded-[20px] bg-[#1C1C1E] border border-[#2C2C2E]/60 hover:border-[#38383A] transition-all active:scale-[0.99] shadow-lg"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center space-x-2">
-              <div className="w-7 h-7 rounded-lg bg-[#FF2D55]/20 text-[#FF2D55] flex items-center justify-center">
-                <UtensilsCrossed className="w-4 h-4" />
-              </div>
-              <span className="text-xs font-semibold text-[#FF2D55] tracking-wide">
-                Protein Intake
-              </span>
-            </div>
-            <div className="flex items-center space-x-1 text-[#8E8E93] text-xs font-mono">
-              <span>TODAY</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </div>
-          </div>
-
-          <div className="flex items-baseline justify-between mt-2">
-            <div>
-              <span className="text-3xl font-extrabold text-white tracking-tight font-sans">
-                {consumedProtein}
-              </span>
-              <span className="text-sm font-semibold text-[#8E8E93] ml-1.5">
-                / {targetProtein} g
-              </span>
-            </div>
-            <span className="text-xs font-semibold text-[#8E8E93] font-mono">
-              {proteinPercent}%
-            </span>
-          </div>
-
-          {/* Apple Health Activity Bar Gauge */}
-          <div className="w-full h-2 rounded-full bg-[#2C2C2E] overflow-hidden mt-3">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-[#FF2D55] to-[#FF6482] transition-all duration-500"
-              style={{ width: `${proteinPercent}%` }}
+          {/* Right Pane: Concentric Apple Health Macro & Energy Rings */}
+          <div className="lg:col-span-1">
+            <DualProgressRings
+              consumedCalories={consumedCalories}
+              targetCalories={targetCalories}
+              consumedProtein={consumedProtein}
+              targetProtein={targetProtein}
+              consumedCarbs={consumedCarbs}
+              targetCarbs={targetCarbs}
+              consumedFat={consumedFat}
+              targetFat={targetFat}
             />
           </div>
-
-          <div className="flex items-center justify-between text-xs text-[#8E8E93] mt-2.5">
-            <span>
-              {targetProtein - consumedProtein > 0
-                ? `${targetProtein - consumedProtein}g to reach daily synthesis goal`
-                : "Target met! Optimal muscle recovery."}
-            </span>
-            <span className="text-[11px] font-mono text-[#FF2D55]">
-              {(profile?.proteinRatioPerLb || 0.9).toFixed(2)} g/lb
-            </span>
-          </div>
-        </Link>
-
-        {/* CARD 3: WEIGHT TREND (#AF52DE Purple / Violet) */}
-        <Link
-          href="/vault"
-          className="block p-4 rounded-[20px] bg-[#1C1C1E] border border-[#2C2C2E]/60 hover:border-[#38383A] transition-all active:scale-[0.99] shadow-lg"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center space-x-2">
-              <div className="w-7 h-7 rounded-lg bg-[#AF52DE]/20 text-[#AF52DE] flex items-center justify-center">
-                <Scale className="w-4 h-4" />
-              </div>
-              <span className="text-xs font-semibold text-[#AF52DE] tracking-wide">
-                Body Weight Trend
-              </span>
-            </div>
-            <div className="flex items-center space-x-1 text-[#8E8E93] text-xs font-mono">
-              <span>7-DAY AVG</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </div>
-          </div>
-
-          <div className="flex items-baseline justify-between mt-2">
-            <div>
-              <span className="text-3xl font-extrabold text-white tracking-tight font-sans">
-                {latestTrendPoint.trendWeightLbs.toFixed(1)}
-              </span>
-              <span className="text-sm font-semibold text-[#8E8E93] ml-1.5">lbs</span>
-            </div>
-
-            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-[#AF52DE]/20 text-[#AF52DE] font-mono">
-              {latestTrendPoint.rateOfGainLbsPerWeek > 0
-                ? `+${latestTrendPoint.rateOfGainLbsPerWeek.toFixed(2)}`
-                : latestTrendPoint.rateOfGainLbsPerWeek.toFixed(2)}{" "}
-              lbs/wk
-            </span>
-          </div>
-
-          {/* Mini Apple Health Sparkline Visualization */}
-          <div className="h-10 flex items-end space-x-2 pt-2 mt-2">
-            {trendData.slice(-7).map((pt, i) => (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                <div
-                  className="w-full rounded-md bg-[#AF52DE]/40 hover:bg-[#AF52DE] transition-colors"
-                  style={{
-                    height: `${Math.max(12, Math.min(36, ((pt.trendWeightLbs % 10) + 1) * 3))}px`,
-                  }}
-                />
-              </div>
-            ))}
-          </div>
-
-          <div className="flex items-center justify-between text-xs text-[#8E8E93] mt-2 border-t border-[#2C2C2E] pt-2">
-            <span>
-              Target Gain: +{profile?.targetGainRateLbsPerWeek || 0.5} lbs/week
-            </span>
-            <span className="text-[#AF52DE] font-semibold text-[11px]">
-              {latestTrendPoint.gainZone === "sweet_spot" || latestTrendPoint.gainZone === "mild_gain"
-                ? "Optimal Lean Bulk Zone"
-                : "Maintenance / Tracking"}
-            </span>
-          </div>
-        </Link>
-
-        {/* CARD 4: WORKOUT TODAY SNAPSHOT (#0A84FF Electric Blue) */}
-        <Link
-          href="/lift"
-          className="block p-4 rounded-[20px] bg-[#1C1C1E] border border-[#2C2C2E]/60 hover:border-[#38383A] transition-all active:scale-[0.99] shadow-lg"
-        >
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center space-x-2">
-              <div className="w-7 h-7 rounded-lg bg-[#0A84FF]/20 text-[#0A84FF] flex items-center justify-center">
-                {todayWorkout?.dayType === "rest" ? (
-                  <Coffee className="w-4 h-4 text-amber-400" />
-                ) : (
-                  <Dumbbell className="w-4 h-4" />
-                )}
-              </div>
-              <span className="text-xs font-semibold text-[#0A84FF] tracking-wide">
-                Today&apos;s Workout
-              </span>
-            </div>
-            <div className="flex items-center space-x-1 text-[#8E8E93] text-xs font-mono">
-              <span>{todayWorkout?.scheduledTime || "08:00 AM"}</span>
-              <ChevronRight className="w-3.5 h-3.5" />
-            </div>
-          </div>
-
-          <div className="mt-2">
-            <div className="text-xl font-bold text-white tracking-tight">
-              {todayWorkout?.routineName || "Push Day A"}
-            </div>
-            <p className="text-xs text-[#8E8E93] mt-0.5 line-clamp-1">
-              {todayWorkout?.notes || "Progressive overload hyper-focus session."}
-            </p>
-          </div>
-
-          {/* Muscle Focus Chips & Action */}
-          <div className="flex items-center justify-between mt-3 pt-2 border-t border-[#2C2C2E]">
-            <div className="flex items-center space-x-1.5 flex-wrap">
-              {todayWorkout?.focusMuscleGroups?.slice(0, 3).map((m) => (
-                <span
-                  key={m}
-                  className="px-2 py-0.5 rounded-md bg-[#2C2C2E] text-[10px] font-mono uppercase text-[#8E8E93]"
-                >
-                  {m}
-                </span>
-              ))}
-            </div>
-
-            {todayWorkout?.isCompleted ? (
-              <span className="text-xs font-bold text-[#30D158] flex items-center space-x-1 font-mono">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Completed</span>
-              </span>
-            ) : (
-              <span className="px-3 py-1 rounded-full bg-[#0A84FF] text-white text-xs font-bold flex items-center space-x-1 shadow-md shadow-[#0A84FF]/20">
-                <Play className="w-3 h-3 fill-current" />
-                <span>Start</span>
-              </span>
-            )}
-          </div>
-        </Link>
-      </div>
+        </div>
+      </section>
 
       {/* Quick Weigh-In Action Sheet */}
       <QuickWeighInModal
