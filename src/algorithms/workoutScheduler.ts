@@ -153,13 +153,13 @@ export function getSplitWeeklyPattern(split: string = "ppl"): RoutineTemplate[] 
   switch (split) {
     case "ppl":
       return [
-        ROUTINE_TEMPLATES.rest,        // Sun
-        ROUTINE_TEMPLATES.push_a,      // Mon
-        ROUTINE_TEMPLATES.pull_a,      // Tue
-        ROUTINE_TEMPLATES.legs_a,      // Wed
-        ROUTINE_TEMPLATES.rest,        // Thu
-        ROUTINE_TEMPLATES.push_b,      // Fri
-        ROUTINE_TEMPLATES.pull_b,      // Sat
+        ROUTINE_TEMPLATES.legs_b,      // Sun (day 0: Leg Day B)
+        ROUTINE_TEMPLATES.push_a,      // Mon (day 1: Push Day A)
+        ROUTINE_TEMPLATES.pull_a,      // Tue (day 2: Pull Day A)
+        ROUTINE_TEMPLATES.legs_a,      // Wed (day 3: Leg Day A)
+        ROUTINE_TEMPLATES.rest,        // Thu (day 4: Mid-week Rest)
+        ROUTINE_TEMPLATES.push_b,      // Fri (day 5: Push Day B)
+        ROUTINE_TEMPLATES.pull_b,      // Sat (day 6: Pull Day B)
       ];
     case "upper_lower":
       return [
@@ -183,13 +183,13 @@ export function getSplitWeeklyPattern(split: string = "ppl"): RoutineTemplate[] 
       ];
     default:
       return [
-        ROUTINE_TEMPLATES.rest,
+        ROUTINE_TEMPLATES.legs_b,
         ROUTINE_TEMPLATES.push_a,
         ROUTINE_TEMPLATES.pull_a,
         ROUTINE_TEMPLATES.legs_a,
         ROUTINE_TEMPLATES.rest,
         ROUTINE_TEMPLATES.push_b,
-        ROUTINE_TEMPLATES.rest,
+        ROUTINE_TEMPLATES.pull_b,
       ];
   }
 }
@@ -242,7 +242,31 @@ export async function ensureWorkoutSchedule(
   const toCreate: LocalScheduledWorkout[] = [];
 
   for (const date of dates) {
-    if (!existingMap.has(date)) {
+    const existingRecord = existingMap.get(date);
+    if (existingRecord) {
+      // Heal previously cached Sunday rest records in PPL if not completed
+      const d = new Date(date + "T00:00:00");
+      if (
+        splitType === "ppl" &&
+        d.getDay() === 0 &&
+        existingRecord.dayType === "rest" &&
+        !existingRecord.isCompleted
+      ) {
+        const template = ROUTINE_TEMPLATES.legs_b;
+        const healed: LocalScheduledWorkout = {
+          ...existingRecord,
+          routineName: template.name,
+          dayType: template.dayType,
+          focusMuscleGroups: template.focusMuscleGroups,
+          exerciseIds: template.exerciseIds,
+          durationMinutes: template.defaultDurationMinutes,
+          notes: template.description,
+          updatedAt: new Date().toISOString(),
+        };
+        toCreate.push(healed);
+        existingMap.set(date, healed);
+      }
+    } else {
       const d = new Date(date + "T00:00:00");
       const dayOfWeek = d.getDay(); // 0 = Sun, 1 = Mon, etc.
       const template = pattern[dayOfWeek] || ROUTINE_TEMPLATES.rest;
@@ -276,6 +300,50 @@ export async function ensureWorkoutSchedule(
 
   // Return sorted by date
   return dates.map((d) => existingMap.get(d)!).filter(Boolean);
+}
+
+/**
+ * Gets or creates the scheduled workout for a specific date (e.g. today).
+ */
+export async function getOrCreateScheduledWorkoutForDate(
+  userId: string,
+  date: string,
+  splitType: "ppl" | "upper_lower" | "full_body" | "custom" = "ppl",
+  preferredTime: string = "08:00"
+): Promise<LocalScheduledWorkout> {
+  const existing = await db.scheduledWorkouts
+    .where("userId")
+    .equals(userId)
+    .and((item) => item.date === date)
+    .first();
+
+  if (existing) {
+    const d = new Date(date + "T00:00:00");
+    if (
+      splitType === "ppl" &&
+      d.getDay() === 0 &&
+      existing.dayType === "rest" &&
+      !existing.isCompleted
+    ) {
+      const template = ROUTINE_TEMPLATES.legs_b;
+      const healed: LocalScheduledWorkout = {
+        ...existing,
+        routineName: template.name,
+        dayType: template.dayType,
+        focusMuscleGroups: template.focusMuscleGroups,
+        exerciseIds: template.exerciseIds,
+        durationMinutes: template.defaultDurationMinutes,
+        notes: template.description,
+        updatedAt: new Date().toISOString(),
+      };
+      await db.scheduledWorkouts.put(healed);
+      return healed;
+    }
+    return existing;
+  }
+
+  const [created] = await ensureWorkoutSchedule(userId, splitType, [date], preferredTime);
+  return created;
 }
 
 /**
