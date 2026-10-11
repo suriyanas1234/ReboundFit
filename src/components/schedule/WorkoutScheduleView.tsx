@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { db, LocalExercise, LocalScheduledWorkout } from "@/lib/db";
 import {
@@ -8,6 +8,8 @@ import {
   updateScheduledWorkout,
   generateDateRange,
   getMondayOfWeek,
+  getSplitWeeklyPattern,
+  applyCustomWeeklySchedule,
   ROUTINE_TEMPLATES,
   RoutineTemplate,
 } from "@/algorithms/workoutScheduler";
@@ -16,6 +18,14 @@ import {
   generateIcsCalendar,
   downloadIcsFile,
   createGoogleCalendarApiEvent,
+  fetchGoogleCalendarEvents,
+  parseIcsContent,
+  generateSampleCalendarEvents,
+  analyzeDayCalendarAvailability,
+  autoFitWorkoutsToFreeSlots,
+  ImportedCalendarEvent,
+  DayCalendarAnalysis,
+  DayFreeSlot,
   CalendarEventPayload,
 } from "@/lib/googleCalendar";
 import { supabase } from "@/lib/supabase";
@@ -38,11 +48,22 @@ import {
   Check,
   X,
   AlertCircle,
+  Sliders,
+  Zap,
+  Upload,
+  CalendarRange,
+  Clock3,
+  AlertTriangle,
+  FileText,
+  Info,
 } from "lucide-react";
 
 interface WorkoutScheduleViewProps {
   onStartScheduledWorkout?: (scheduled: LocalScheduledWorkout) => void;
 }
+
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const DAY_SHORT_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutScheduleViewProps) {
   const { user, profile } = useAuth();
@@ -56,14 +77,54 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [editingWorkout, setEditingWorkout] = useState<LocalScheduledWorkout | null>(null);
 
-  // Google Calendar Sync States
+  // Google Calendar Sync & Import States
   const [isSyncingGCal, setIsSyncingGCal] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<{
     type: "success" | "error" | "info";
     message: string;
   } | null>(null);
 
+  // Frequency & Custom Days Modal
+  const [isFrequencyModalOpen, setIsFrequencyModalOpen] = useState<boolean>(false);
+  const [customDaysConfig, setCustomDaysConfig] = useState<{
+    [dayOfWeek: number]: {
+      dayType: "workout" | "rest";
+      routineKey: string;
+      preferredTime: string;
+    };
+  }>({
+    0: { dayType: "workout", routineKey: "legs_b", preferredTime: "08:00" },
+    1: { dayType: "workout", routineKey: "push_a", preferredTime: "08:00" },
+    2: { dayType: "workout", routineKey: "pull_a", preferredTime: "08:00" },
+    3: { dayType: "workout", routineKey: "legs_a", preferredTime: "08:00" },
+    4: { dayType: "rest", routineKey: "rest", preferredTime: "08:00" },
+    5: { dayType: "workout", routineKey: "push_b", preferredTime: "08:00" },
+    6: { dayType: "workout", routineKey: "pull_b", preferredTime: "08:00" },
+  });
+  const [selectedPresetFrequency, setSelectedPresetFrequency] = useState<number>(6);
+
+  // Google Calendar Smart Fit & Availability Modal
+  const [isCalendarFitModalOpen, setIsCalendarFitModalOpen] = useState<boolean>(false);
+  const [importedCalendarEvents, setImportedCalendarEvents] = useState<ImportedCalendarEvent[]>([]);
+  const [isImportingGCal, setIsImportingGCal] = useState<boolean>(false);
+  const [fitPreferredPeriod, setFitPreferredPeriod] = useState<"morning" | "evening" | "any">("morning");
+  const [expandedDayCalendar, setExpandedDayCalendar] = useState<string | null>(null);
+  const [autoFitNotice, setAutoFitNotice] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const todayStr = new Date().toISOString().split("T")[0];
+
+  // Initialize customDaysConfig from profile if present
+  useEffect(() => {
+    if (profile?.customWeeklySchedule) {
+      setCustomDaysConfig(profile.customWeeklySchedule as any);
+      if (profile.workoutDaysPerWeek) {
+        setSelectedPresetFrequency(profile.workoutDaysPerWeek);
+      }
+    } else if (profile?.workoutDaysPerWeek) {
+      handleSelectPreset(profile.workoutDaysPerWeek);
+    }
+  }, [profile]);
 
   // Load exercises & current week schedule
   const loadWeekSchedule = async (mondayStr: string) => {
@@ -75,7 +136,14 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
 
       const splitType = (profile?.trainingSplit || "ppl") as any;
       const weekDates = generateDateRange(mondayStr, 7);
-      const schedule = await ensureWorkoutSchedule(user.id, splitType, weekDates, preferredTime);
+      const schedule = await ensureWorkoutSchedule(
+        user.id,
+        splitType,
+        weekDates,
+        preferredTime,
+        profile?.workoutDaysPerWeek,
+        profile?.customWeeklySchedule as any
+      );
       setScheduledWorkouts(schedule);
     } catch (err) {
       console.error("Failed to load workout schedule:", err);
@@ -179,12 +247,10 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
     }
 
     try {
-      // 1. Check if Supabase session has an active Google OAuth provider_token
       const { data: { session } } = await supabase.auth.getSession();
       const providerToken = session?.provider_token;
 
       if (providerToken) {
-        // Direct Google Calendar API sync
         let successCount = 0;
         for (const w of workoutDays) {
           const names = getExerciseNames(w.exerciseIds);
@@ -210,7 +276,6 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
           message: `✓ Successfully synced ${successCount} workouts directly to your Google Calendar!`,
         });
       } else {
-        // Fallback: Generate full week .ics Calendar file download & offer instant web link
         const payloads: CalendarEventPayload[] = workoutDays.map((w) => ({
           title: w.routineName,
           date: w.date,
@@ -225,7 +290,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
 
         setSyncStatus({
           type: "success",
-          message: "✓ Generated & downloaded Google Calendar schedule (.ics). Open it or import to Google Calendar!",
+          message: "✓ Generated & downloaded Google Calendar schedule (.ics). Open it to import all workouts!",
         });
       }
     } catch (err: any) {
@@ -236,6 +301,202 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
     } finally {
       setIsSyncingGCal(false);
     }
+  };
+
+  // =========================================================================
+  // FREQUENCY & REST DAYS CUSTOMIZATION HANDLERS
+  // =========================================================================
+  const handleSelectPreset = (daysPerWeek: number) => {
+    setSelectedPresetFrequency(daysPerWeek);
+    const pattern = getSplitWeeklyPattern(profile?.trainingSplit || "ppl", daysPerWeek);
+
+    const nextConfig: typeof customDaysConfig = {};
+    for (let day = 0; day < 7; day++) {
+      const template = pattern[day] || ROUTINE_TEMPLATES.rest;
+      const key =
+        Object.entries(ROUTINE_TEMPLATES).find(([, t]) => t.name === template.name)?.[0] ||
+        (template.dayType === "rest" ? "rest" : "push_a");
+      nextConfig[day] = {
+        dayType: template.dayType,
+        routineKey: key,
+        preferredTime: customDaysConfig[day]?.preferredTime || "08:00",
+      };
+    }
+    setCustomDaysConfig(nextConfig);
+  };
+
+  const handleToggleMatrixDayType = (day: number) => {
+    setCustomDaysConfig((prev) => {
+      const current = prev[day];
+      const newType = current?.dayType === "workout" ? "rest" : "workout";
+      const newKey = newType === "rest" ? "rest" : "push_a";
+      return {
+        ...prev,
+        [day]: {
+          dayType: newType,
+          routineKey: newKey,
+          preferredTime: current?.preferredTime || "08:00",
+        },
+      };
+    });
+  };
+
+  const handleUpdateMatrixRoutine = (day: number, routineKey: string) => {
+    setCustomDaysConfig((prev) => ({
+      ...prev,
+      [day]: {
+        dayType: routineKey === "rest" ? "rest" : "workout",
+        routineKey,
+        preferredTime: prev[day]?.preferredTime || "08:00",
+      },
+    }));
+  };
+
+  const handleApplyCustomSchedule = async () => {
+    if (!user) return;
+    try {
+      const pattern: RoutineTemplate[] = [];
+      for (let day = 0; day < 7; day++) {
+        const cfg = customDaysConfig[day];
+        if (cfg && cfg.dayType === "workout" && cfg.routineKey && ROUTINE_TEMPLATES[cfg.routineKey]) {
+          pattern.push(ROUTINE_TEMPLATES[cfg.routineKey]);
+        } else {
+          pattern.push(ROUTINE_TEMPLATES.rest);
+        }
+      }
+
+      // Save to user profile in Dexie
+      if (profile) {
+        const workoutCount = Object.values(customDaysConfig).filter((c) => c.dayType === "workout").length;
+        const updatedProfile = {
+          ...profile,
+          workoutDaysPerWeek: workoutCount,
+          customWeeklySchedule: customDaysConfig,
+          updatedAt: new Date().toISOString(),
+        };
+        await db.profiles.put(updatedProfile);
+      }
+
+      // Re-apply to current selected week
+      const weekDates = generateDateRange(selectedMonday, 7);
+      const updatedSchedule = await applyCustomWeeklySchedule(
+        user.id,
+        weekDates,
+        pattern,
+        preferredTime
+      );
+      setScheduledWorkouts(updatedSchedule);
+
+      setIsFrequencyModalOpen(false);
+      setSyncStatus({
+        type: "success",
+        message: `✓ Applied custom training frequency: ${
+          Object.values(customDaysConfig).filter((c) => c.dayType === "workout").length
+        } workout days & ${
+          Object.values(customDaysConfig).filter((c) => c.dayType === "rest").length
+        } rest days.`,
+      });
+    } catch (err: any) {
+      console.error("Failed to apply custom schedule:", err);
+    }
+  };
+
+  // =========================================================================
+  // GOOGLE CALENDAR AVAILABILITY & SMART FIT HANDLERS
+  // =========================================================================
+  const handleFetchGoogleCalendarEventsOAuth = async () => {
+    setIsImportingGCal(true);
+    setAutoFitNotice(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = session?.provider_token;
+      if (!token) {
+        setSyncStatus({
+          type: "info",
+          message:
+            "No active Google Calendar token found. Sign in with Google to sync directly or use the '.ics File' / 'Demo Schedule' option below.",
+        });
+        setIsImportingGCal(false);
+        return;
+      }
+
+      const weekDates = generateDateRange(selectedMonday, 7);
+      const minIso = `${weekDates[0]}T00:00:00Z`;
+      const maxIso = `${weekDates[6]}T23:59:59Z`;
+
+      const res = await fetchGoogleCalendarEvents(token, minIso, maxIso);
+      if (res.success && res.events) {
+        setImportedCalendarEvents(res.events);
+        setAutoFitNotice(`✓ Imported ${res.events.length} Google Calendar commitments for this week!`);
+      } else {
+        setSyncStatus({
+          type: "error",
+          message: res.error || "Could not retrieve Google Calendar events.",
+        });
+      }
+    } catch (err: any) {
+      setSyncStatus({ type: "error", message: err.message || "OAuth calendar fetch failed." });
+    } finally {
+      setIsImportingGCal(false);
+    }
+  };
+
+  const handleUploadIcsFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        const events = parseIcsContent(content);
+        setImportedCalendarEvents(events);
+        setAutoFitNotice(`✓ Loaded ${events.length} calendar events from ${file.name}!`);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleLoadSampleSchedule = () => {
+    const sample = generateSampleCalendarEvents(selectedMonday);
+    setImportedCalendarEvents(sample);
+    setAutoFitNotice("✓ Loaded sample calendar schedule (meetings, standups & appointments).");
+  };
+
+  const handleAutoFitWorkouts = async () => {
+    if (importedCalendarEvents.length === 0) {
+      setAutoFitNotice("Please import or load calendar commitments first to detect free windows.");
+      return;
+    }
+
+    const { updatedWorkouts, fittedCount, summaries } = autoFitWorkoutsToFreeSlots(
+      scheduledWorkouts,
+      importedCalendarEvents,
+      fitPreferredPeriod
+    );
+
+    for (const w of updatedWorkouts) {
+      await updateScheduledWorkout(w);
+    }
+    setScheduledWorkouts(updatedWorkouts);
+
+    setAutoFitNotice(
+      fittedCount > 0
+        ? `⚡ Successfully auto-fitted ${fittedCount} workouts into conflict-free windows!`
+        : "✓ All scheduled workouts already fit your calendar commitments with 0 conflicts!"
+    );
+  };
+
+  const handleApplySingleFreeSlot = async (workout: LocalScheduledWorkout, slotStart: string) => {
+    const updated: LocalScheduledWorkout = {
+      ...workout,
+      scheduledTime: slotStart,
+      calendarConflict: undefined,
+      suggestedFreeSlot: `${slotStart} (Manual Fit)`,
+      updatedAt: new Date().toISOString(),
+    };
+    await updateScheduledWorkout(updated);
+    setScheduledWorkouts((prev) => prev.map((w) => (w.id === workout.id ? updated : w)));
   };
 
   // Helper date formatting
@@ -265,31 +526,39 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
 
+  // Count active workout and rest days currently configured
+  const currentWorkoutDaysCount = Object.values(customDaysConfig).filter(
+    (c) => c.dayType === "workout"
+  ).length;
+  const currentRestDaysCount = 7 - currentWorkoutDaysCount;
+
   return (
     <div className="space-y-6">
       {/* =========================================================================
-          TOP BANNER: DATE NAVIGATION & GOOGLE CALENDAR SYNC LAUNCHER
+          TOP BANNER: DATE NAVIGATION, FREQUENCY & GOOGLE CALENDAR CONTROLS
           ========================================================================= */}
-      <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-2 flex-wrap">
             <span className="text-xs font-mono font-bold uppercase tracking-wider text-brand-cyan">
-              Training Split: {profile?.trainingSplit?.toUpperCase() || "PPL"}
+              {currentWorkoutDaysCount} Days / Week • {currentRestDaysCount} Rest Days
             </span>
             <span className="text-xs text-gray-500">•</span>
-            <span className="text-xs text-gray-400 font-mono">Date-By-Date Schedule</span>
+            <span className="text-xs text-gray-400 font-mono">
+              {profile?.trainingSplit?.toUpperCase() || "PPL"} Split
+            </span>
           </div>
           <h2 className="text-2xl font-bold text-white mt-1">
             {formatHeaderRange(selectedMonday)}
           </h2>
           <p className="text-xs text-gray-400 mt-1">
-            Plan your workouts by date, adjust session times, and sync directly with Google Calendar.
+            Choose your workout vs rest days, check calendar conflicts, and auto-fit sessions into free windows.
           </p>
         </div>
 
         {/* Action Controls & Navigation */}
         <div className="flex flex-wrap items-center gap-2">
-          {/* Week Selector buttons */}
+          {/* Week Selector */}
           <div className="flex items-center rounded-2xl bg-surface-elevated border border-surface-border p-1">
             <button
               onClick={handlePrevWeek}
@@ -313,6 +582,26 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
             </button>
           </div>
 
+          {/* Change Workout Frequency / Rest Days */}
+          <button
+            onClick={() => setIsFrequencyModalOpen(true)}
+            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-2xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border hover:border-brand-cyan/40 text-xs font-bold text-gray-200 hover:text-white transition-all active:scale-95 shadow-md"
+            title="Configure how many days you work out and have rest days"
+          >
+            <Sliders className="w-4 h-4 text-brand-cyan" />
+            <span>Workout & Rest Days</span>
+          </button>
+
+          {/* Google Calendar Smart Fit */}
+          <button
+            onClick={() => setIsCalendarFitModalOpen(true)}
+            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-2xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border hover:border-brand-cyan/40 text-xs font-bold text-gray-200 hover:text-white transition-all active:scale-95 shadow-md"
+            title="Import Google Calendar and see where workouts fit"
+          >
+            <Zap className="w-4 h-4 text-amber-400" />
+            <span>Calendar Availability & Fit</span>
+          </button>
+
           {/* Sync Week with Google Calendar */}
           <button
             onClick={handleSyncWholeWeekGoogleCalendar}
@@ -324,7 +613,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
             ) : (
               <CalendarCheck className="w-4 h-4 stroke-[2.5]" />
             )}
-            <span>{isSyncingGCal ? "Syncing..." : "Sync with Google Calendar"}</span>
+            <span>{isSyncingGCal ? "Syncing..." : "Sync Week to Google Cal"}</span>
           </button>
         </div>
       </div>
@@ -365,6 +654,17 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
           const isToday = workout.date === todayStr;
           const isRest = workout.dayType === "rest";
 
+          // Calculate calendar analysis if events imported
+          const analysis =
+            importedCalendarEvents.length > 0
+              ? analyzeDayCalendarAvailability(
+                  workout.date,
+                  importedCalendarEvents,
+                  workout.durationMinutes,
+                  workout.scheduledTime
+                )
+              : null;
+
           return (
             <div
               key={workout.id}
@@ -378,27 +678,41 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
                   : "bg-surface border-surface-border text-white hover:border-brand-cyan/40"
               }`}
             >
-              <div className="text-[10px] font-mono uppercase text-gray-400">
-                {getDayLabel(workout.date)}
+              <div className="flex items-center justify-between text-[11px] font-mono text-gray-400 mb-1">
+                <span className="font-bold">{getDayLabel(workout.date)}</span>
+                <span>{getFormattedDate(workout.date)}</span>
               </div>
-              <div className={`text-sm font-bold ${isToday ? "text-brand-cyan" : "text-white"}`}>
-                {getFormattedDate(workout.date)}
+
+              <div className="font-bold text-xs truncate mb-1">
+                {isRest ? "Rest Day" : workout.routineName.split("(")[0]}
               </div>
-              <div className="mt-2 text-[11px] font-semibold truncate" title={workout.routineName}>
-                {isRest ? "Rest Day" : workout.routineName.split("(")[0].trim()}
-              </div>
-              <div className="mt-1 flex items-center justify-center">
+
+              {/* Status Badge */}
+              <div className="flex items-center justify-center space-x-1">
                 {workout.isCompleted ? (
-                  <span className="inline-flex items-center space-x-1 text-[10px] text-brand-emerald font-mono">
-                    <Check className="w-3 h-3" />
+                  <span className="text-[10px] font-mono text-brand-emerald flex items-center space-x-0.5">
+                    <CheckCircle2 className="w-3 h-3" />
                     <span>Done</span>
                   </span>
                 ) : isRest ? (
-                  <span className="text-[10px] text-gray-500 font-mono">Recovery</span>
+                  <span className="text-[10px] font-mono text-amber-400/80 flex items-center space-x-0.5">
+                    <Coffee className="w-3 h-3" />
+                    <span>Recovery</span>
+                  </span>
                 ) : (
-                  <span className="text-[10px] text-brand-cyan font-mono">Scheduled</span>
+                  <span className="text-[10px] font-mono text-brand-cyan flex items-center space-x-0.5">
+                    <Clock className="w-3 h-3" />
+                    <span>{workout.scheduledTime || "08:00"}</span>
+                  </span>
                 )}
               </div>
+
+              {/* Conflict indicator on mini card if detected */}
+              {analysis?.hasConflictWithWorkout && (
+                <div className="mt-1 text-[9px] font-bold text-brand-rose bg-brand-rose/15 rounded py-0.5 px-1 truncate">
+                  Conflict!
+                </div>
+              )}
             </div>
           );
         })}
@@ -411,96 +725,198 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
         {scheduledWorkouts.map((workout) => {
           const isToday = workout.date === todayStr;
           const isRest = workout.dayType === "rest";
-          const plannedNames = getExerciseNames(workout.exerciseIds);
+          const exerciseNames = getExerciseNames(workout.exerciseIds);
+
+          // Real-time Calendar Conflict & Free Window Analysis
+          const analysis =
+            importedCalendarEvents.length > 0
+              ? analyzeDayCalendarAvailability(
+                  workout.date,
+                  importedCalendarEvents,
+                  workout.durationMinutes,
+                  workout.scheduledTime
+                )
+              : null;
 
           return (
             <div
               key={workout.id}
-              className={`rounded-3xl p-6 border transition-all ${
+              className={`rounded-3xl border p-6 transition-all shadow-xl ${
                 isToday
-                  ? "bg-surface border-brand-cyan/60 shadow-xl shadow-brand-cyan/5"
+                  ? "bg-surface border-brand-cyan/60 ring-1 ring-brand-cyan/40"
                   : isRest
-                  ? "bg-surface/60 border-surface-border opacity-85"
-                  : "bg-surface border-surface-border hover:border-brand-cyan/30"
+                  ? "bg-surface/60 border-surface-border opacity-90"
+                  : "bg-surface border-surface-border hover:border-surface-border/80"
               }`}
             >
-              <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                {/* Left: Date & Routine Meta */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                {/* Left: Day Header & Routine */}
                 <div className="space-y-2 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-surface-elevated border border-surface-border text-gray-300">
-                      {getDayLabel(workout.date)} • {getFormattedDate(workout.date)}
+                  <div className="flex items-center space-x-2 flex-wrap">
+                    <span className="px-3 py-1 rounded-xl bg-surface-elevated border border-surface-border text-xs font-mono font-bold text-white">
+                      {getDayLabel(workout.date)}, {getFormattedDate(workout.date)}
                     </span>
 
                     {isToday && (
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-extrabold uppercase bg-brand-cyan text-black">
+                      <span className="px-2.5 py-0.5 rounded-full bg-brand-cyan/20 border border-brand-cyan/40 text-brand-cyan text-[11px] font-mono font-bold uppercase">
                         Today
                       </span>
                     )}
 
                     {workout.isCompleted && (
-                      <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-brand-emerald/20 text-brand-emerald border border-brand-emerald/40 flex items-center space-x-1">
-                        <Check className="w-3 h-3" />
+                      <span className="px-2.5 py-0.5 rounded-full bg-brand-emerald/20 border border-brand-emerald/40 text-brand-emerald text-[11px] font-mono font-bold flex items-center space-x-1">
+                        <Check className="w-3 h-3 stroke-[3]" />
                         <span>Completed</span>
                       </span>
                     )}
 
-                    <span className="text-xs text-gray-400 font-mono flex items-center space-x-1">
-                      <Clock className="w-3.5 h-3.5" />
-                      <span>{workout.scheduledTime || "08:00"}</span>
-                      <span>({workout.durationMinutes}m)</span>
-                    </span>
+                    {/* Google Calendar Conflict Warning or Free Slot Badge */}
+                    {analysis?.hasConflictWithWorkout && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-brand-rose/20 border border-brand-rose/40 text-brand-rose text-[11px] font-mono font-bold flex items-center space-x-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        <span>Calendar Conflict</span>
+                      </span>
+                    )}
+
+                    {analysis && !analysis.hasConflictWithWorkout && !isRest && (
+                      <span className="px-2.5 py-0.5 rounded-full bg-brand-emerald/15 border border-brand-emerald/30 text-brand-emerald text-[11px] font-mono flex items-center space-x-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        <span>Fits Calendar</span>
+                      </span>
+                    )}
                   </div>
 
-                  <div className="flex items-center space-x-3 mt-1">
-                    <div
-                      className={`p-3 rounded-2xl flex items-center justify-center ${
-                        isRest
-                          ? "bg-gray-800 text-gray-400"
-                          : "bg-brand-cyan/15 text-brand-cyan"
-                      }`}
-                    >
-                      {isRest ? <Coffee className="w-6 h-6" /> : <Dumbbell className="w-6 h-6" />}
-                    </div>
-
-                    <div>
-                      <h3 className="text-lg font-bold text-white">{workout.routineName}</h3>
-                      <p className="text-xs text-gray-400 mt-0.5">{workout.notes}</p>
-                    </div>
+                  {/* Title & Notes */}
+                  <div>
+                    <h3 className="text-xl font-bold text-white flex items-center space-x-2">
+                      <span>{workout.routineName}</span>
+                    </h3>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {workout.notes ||
+                        (isRest
+                          ? "Recovery day for muscle protein synthesis and energy replenishment."
+                          : "Targeted progressive overload training session.")}
+                    </p>
                   </div>
 
-                  {/* Muscle focus tags */}
-                  {workout.focusMuscleGroups && workout.focusMuscleGroups.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 pt-1">
-                      {workout.focusMuscleGroups.map((muscle) => (
-                        <span
-                          key={muscle}
-                          className="px-2 py-0.5 rounded-lg text-[10px] font-mono uppercase bg-surface-elevated border border-surface-border text-gray-400"
+                  {/* Meta Chips */}
+                  <div className="flex items-center space-x-3 text-xs font-mono text-gray-400 pt-1 flex-wrap gap-y-1">
+                    {!isRest && (
+                      <>
+                        <div className="flex items-center space-x-1 text-gray-300">
+                          <Clock className="w-3.5 h-3.5 text-brand-cyan" />
+                          <span>Time: {workout.scheduledTime || "08:00"}</span>
+                        </div>
+                        <span>•</span>
+                        <div>~{workout.durationMinutes || 60} min session</div>
+                        <span>•</span>
+                      </>
+                    )}
+
+                    {workout.focusMuscleGroups && workout.focusMuscleGroups.length > 0 && (
+                      <div className="flex items-center space-x-1">
+                        {workout.focusMuscleGroups.map((m) => (
+                          <span
+                            key={m}
+                            className="px-2 py-0.5 rounded bg-surface-elevated text-[10px] uppercase text-gray-300"
+                          >
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Calendar Conflict Alert Message with 1-click Quick Fix */}
+                  {analysis?.hasConflictWithWorkout && (
+                    <div className="mt-2 p-3 rounded-2xl bg-brand-rose/10 border border-brand-rose/30 flex items-center justify-between text-xs text-brand-rose">
+                      <div className="flex items-center space-x-2">
+                        <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                        <span>{analysis.conflictDetails}</span>
+                      </div>
+                      {analysis.recommendedSlot && (
+                        <button
+                          onClick={() => handleApplySingleFreeSlot(workout, analysis.recommendedSlot!.start)}
+                          className="px-3 py-1 rounded-xl bg-brand-rose/20 hover:bg-brand-rose/30 text-[11px] font-bold text-white transition-colors"
                         >
-                          {muscle}
-                        </span>
-                      ))}
+                          Auto-Fix to {analysis.recommendedSlot.start}
+                        </button>
+                      )}
                     </div>
                   )}
 
-                  {/* Planned Exercises Checklist */}
-                  {!isRest && plannedNames.length > 0 && (
-                    <div className="pt-2">
-                      <div className="text-[11px] font-mono uppercase text-gray-400 mb-1.5 flex items-center space-x-1">
-                        <Layers className="w-3.5 h-3.5 text-brand-cyan" />
-                        <span>Planned Exercises ({plannedNames.length})</span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                        {plannedNames.map((name, i) => (
-                          <div
-                            key={name + i}
-                            className="flex items-center space-x-2 text-xs text-gray-300 bg-surface-elevated/60 px-3 py-1.5 rounded-xl border border-surface-border/50"
-                          >
-                            <span className="text-brand-cyan font-mono text-[10px] font-bold">
-                              {i + 1}.
-                            </span>
-                            <span className="truncate">{name}</span>
+                  {/* Imported Calendar Commitments Expandable */}
+                  {analysis && analysis.events.length > 0 && (
+                    <div className="pt-1">
+                      <button
+                        onClick={() =>
+                          setExpandedDayCalendar(
+                            expandedDayCalendar === workout.date ? null : workout.date
+                          )
+                        }
+                        className="text-xs text-brand-cyan hover:underline flex items-center space-x-1 font-mono"
+                      >
+                        <Calendar className="w-3.5 h-3.5" />
+                        <span>
+                          {analysis.events.length} Google Calendar commitment(s) today{" "}
+                          {expandedDayCalendar === workout.date ? "▲" : "▼"}
+                        </span>
+                      </button>
+
+                      {expandedDayCalendar === workout.date && (
+                        <div className="mt-2 p-3 rounded-2xl bg-surface-elevated/70 border border-surface-border text-xs space-y-2">
+                          <div className="text-[11px] font-mono uppercase text-gray-400">
+                            Your Calendar Commitments:
                           </div>
+                          {analysis.events.map((ev) => (
+                            <div
+                              key={ev.id}
+                              className="flex items-center justify-between text-gray-300"
+                            >
+                              <span className="font-semibold text-white truncate">{ev.title}</span>
+                              <span className="font-mono text-gray-400">
+                                {ev.isAllDay ? "All Day" : `${ev.startTime} - ${ev.endTime}`}
+                              </span>
+                            </div>
+                          ))}
+
+                          <div className="pt-2 border-t border-surface-border">
+                            <div className="text-[11px] font-mono uppercase text-brand-emerald mb-1">
+                              Detected Free Workout Windows:
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {analysis.freeSlots.map((slot, i) => (
+                                <button
+                                  key={i}
+                                  onClick={() => handleApplySingleFreeSlot(workout, slot.start)}
+                                  className="px-2.5 py-1 rounded-xl bg-surface hover:bg-brand-cyan/20 border border-surface-border hover:border-brand-cyan/40 text-[11px] text-gray-200 hover:text-white transition-colors font-mono"
+                                  title="Fit workout to this free window"
+                                >
+                                  {slot.start} – {slot.end} ({slot.label}) ⚡ Fit
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Exercise Checklist Preview */}
+                  {!isRest && exerciseNames.length > 0 && (
+                    <div className="pt-2">
+                      <div className="text-[11px] font-mono uppercase text-gray-500 mb-1">
+                        Planned Exercises:
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {exerciseNames.map((name, i) => (
+                          <span
+                            key={i}
+                            className="px-2.5 py-1 rounded-lg bg-surface-elevated/80 border border-surface-border text-xs text-gray-300 flex items-center space-x-1"
+                          >
+                            <span className="text-[10px] font-mono text-brand-cyan">#{i + 1}</span>
+                            <span>{name}</span>
+                          </span>
                         ))}
                       </div>
                     </div>
@@ -520,7 +936,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
                     </button>
                   )}
 
-                  {/* 1-Tap Google Calendar Web Button */}
+                  {/* 1-Tap Google Calendar Web Intent */}
                   {!isRest && (
                     <button
                       onClick={() => handleOpenGoogleCalendarSingle(workout)}
@@ -532,21 +948,20 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
                     </button>
                   )}
 
-                  <div className="flex items-center space-x-1 w-full sm:w-auto justify-end">
-                    {/* Mark Done Toggle */}
+                  {/* Secondary Toggles */}
+                  <div className="flex items-center space-x-1.5 w-full sm:w-auto justify-end pt-1">
                     <button
                       onClick={() => handleToggleCompleted(workout)}
                       className={`p-2 rounded-xl border text-xs transition-colors ${
                         workout.isCompleted
-                          ? "bg-brand-emerald/20 border-brand-emerald text-brand-emerald"
+                          ? "bg-brand-emerald text-black border-brand-emerald"
                           : "bg-surface-elevated border-surface-border text-gray-400 hover:text-white"
                       }`}
-                      title={workout.isCompleted ? "Mark incomplete" : "Mark completed"}
+                      title={workout.isCompleted ? "Mark Incomplete" : "Mark Complete"}
                     >
-                      <Check className="w-4 h-4" />
+                      <Check className="w-4 h-4 stroke-[3]" />
                     </button>
 
-                    {/* Toggle Rest/Workout Day */}
                     <button
                       onClick={() => handleToggleDayType(workout)}
                       className="px-2.5 py-2 rounded-xl bg-surface-elevated border border-surface-border text-xs text-gray-400 hover:text-white transition-colors"
@@ -555,7 +970,6 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
                       {isRest ? "Make Workout" : "Make Rest"}
                     </button>
 
-                    {/* Edit Details */}
                     <button
                       onClick={() => setEditingWorkout(workout)}
                       className="p-2 rounded-xl bg-surface-elevated border border-surface-border text-gray-400 hover:text-white transition-colors"
@@ -572,7 +986,368 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
       </div>
 
       {/* =========================================================================
-          EDIT MODAL: CUSTOMIZE WORKOUT ROUTINE ON ANY DATE
+          MODAL 1: CUSTOMIZE WORKOUT FREQUENCY & REST DAYS
+          ========================================================================= */}
+      {isFrequencyModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-2xl rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl space-y-5 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-surface-border">
+              <div>
+                <div className="flex items-center space-x-2">
+                  <Sliders className="w-5 h-5 text-brand-cyan" />
+                  <h3 className="text-lg font-bold text-white">Customize Workout & Rest Days</h3>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Select how many days you want to train and choose which days are rest days.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsFrequencyModalOpen(false)}
+                className="p-2 rounded-xl text-gray-400 hover:text-white hover:bg-surface-elevated"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Frequency Presets */}
+            <div>
+              <label className="text-xs font-mono uppercase text-gray-400 block mb-2">
+                Quick Frequency Presets:
+              </label>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { days: 3, label: "3 Days / Week", desc: "Full Body (Mon/Wed/Fri)" },
+                  { days: 4, label: "4 Days / Week", desc: "Upper / Lower (Mon/Tue/Thu/Fri)" },
+                  { days: 5, label: "5 Days / Week", desc: "PPL + Upper/Lower" },
+                  { days: 6, label: "6 Days / Week", desc: "Classic PPL (1 Rest Day)" },
+                ].map((preset) => (
+                  <button
+                    key={preset.days}
+                    type="button"
+                    onClick={() => handleSelectPreset(preset.days)}
+                    className={`p-3 rounded-2xl border text-left transition-all ${
+                      selectedPresetFrequency === preset.days
+                        ? "bg-brand-cyan/20 border-brand-cyan text-white shadow-md shadow-brand-cyan/10"
+                        : "bg-surface-elevated border-surface-border text-gray-300 hover:border-gray-500"
+                    }`}
+                  >
+                    <div className="font-bold text-xs">{preset.label}</div>
+                    <div className="text-[10px] text-gray-400 mt-0.5">{preset.desc}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 7-Day Day-by-Day Interactive Matrix */}
+            <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+              <div className="flex items-center justify-between text-xs">
+                <span className="font-mono text-gray-400 uppercase">
+                  Weekly Schedule Matrix (Click to toggle Workout vs Rest):
+                </span>
+                <span className="font-mono font-bold text-brand-cyan">
+                  {currentWorkoutDaysCount} Workout Days • {currentRestDaysCount} Rest Days
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {[0, 1, 2, 3, 4, 5, 6].map((dayIdx) => {
+                  const cfg = customDaysConfig[dayIdx] || {
+                    dayType: "rest",
+                    routineKey: "rest",
+                    preferredTime: "08:00",
+                  };
+                  const isWorkout = cfg.dayType === "workout";
+
+                  return (
+                    <div
+                      key={dayIdx}
+                      className={`p-3 rounded-2xl border transition-all ${
+                        isWorkout
+                          ? "bg-surface-elevated border-brand-cyan/40"
+                          : "bg-surface-elevated/50 border-surface-border text-gray-400"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs font-bold text-white">
+                          {DAY_NAMES[dayIdx]} ({DAY_SHORT_NAMES[dayIdx]})
+                        </span>
+
+                        <button
+                          type="button"
+                          onClick={() => handleToggleMatrixDayType(dayIdx)}
+                          className={`px-3 py-1 rounded-xl text-[11px] font-bold font-mono transition-all ${
+                            isWorkout
+                              ? "bg-brand-cyan text-black"
+                              : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                          }`}
+                        >
+                          {isWorkout ? "Workout" : "Rest Day"}
+                        </button>
+                      </div>
+
+                      {isWorkout ? (
+                        <div className="space-y-1.5 pt-1">
+                          <label className="text-[10px] font-mono text-gray-400">Assigned Routine:</label>
+                          <select
+                            value={cfg.routineKey}
+                            onChange={(e) => handleUpdateMatrixRoutine(dayIdx, e.target.value)}
+                            className="w-full bg-surface border border-surface-border rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-brand-cyan"
+                          >
+                            {Object.entries(ROUTINE_TEMPLATES).map(([k, t]) => (
+                              <option key={k} value={k} className="bg-[#12141a]">
+                                {t.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] font-mono text-gray-500 italic py-1">
+                          Active recovery, caloric maintenance, and rest.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="flex items-center justify-end space-x-3 pt-3 border-t border-surface-border">
+              <button
+                type="button"
+                onClick={() => setIsFrequencyModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyCustomSchedule}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-brand-cyan to-brand-emerald text-black font-extrabold text-xs shadow-lg shadow-brand-cyan/20 active:scale-95 transition-all"
+              >
+                Apply & Save Schedule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL 2: GOOGLE CALENDAR AVAILABILITY & SMART FIT
+          ========================================================================= */}
+      {isCalendarFitModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-2xl rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl space-y-5 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between pb-3 border-b border-surface-border">
+              <div>
+                <div className="flex items-center space-x-2">
+                  <Zap className="w-5 h-5 text-amber-400" />
+                  <h3 className="text-lg font-bold text-white">
+                    Google Calendar Availability & Smart Fit
+                  </h3>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Import your Google Calendar to view commitments and auto-fit workouts into free windows.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsCalendarFitModalOpen(false)}
+                className="p-2 rounded-xl text-gray-400 hover:text-white hover:bg-surface-elevated"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Step 1: Import Google Calendar Events */}
+            <div className="space-y-2">
+              <span className="text-xs font-mono uppercase text-gray-400 block">
+                1. Sync / Import Your Google Calendar:
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {/* Option A: OAuth Direct Sync */}
+                <button
+                  type="button"
+                  onClick={handleFetchGoogleCalendarEventsOAuth}
+                  disabled={isImportingGCal}
+                  className="p-3 rounded-2xl bg-surface-elevated border border-surface-border hover:border-brand-cyan/50 text-left transition-all active:scale-95 disabled:opacity-50"
+                >
+                  <div className="flex items-center space-x-1.5 text-xs font-bold text-brand-cyan">
+                    <RefreshCw className={`w-3.5 h-3.5 ${isImportingGCal ? "animate-spin" : ""}`} />
+                    <span>Google OAuth Sync</span>
+                  </div>
+                  <div className="text-[10px] text-gray-400 mt-1">
+                    Direct sync with primary Google Calendar.
+                  </div>
+                </button>
+
+                {/* Option B: Upload .ics file */}
+                <label className="p-3 rounded-2xl bg-surface-elevated border border-surface-border hover:border-brand-cyan/50 text-left transition-all active:scale-95 cursor-pointer">
+                  <div className="flex items-center space-x-1.5 text-xs font-bold text-white">
+                    <Upload className="w-3.5 h-3.5 text-brand-emerald" />
+                    <span>Upload .ics File</span>
+                  </div>
+                  <div className="text-[10px] text-gray-400 mt-1">
+                    Export from Google Cal & upload.
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".ics,text/calendar"
+                    onChange={handleUploadIcsFile}
+                    className="sr-only"
+                  />
+                </label>
+
+                {/* Option C: Load Sample Schedule */}
+                <button
+                  type="button"
+                  onClick={handleLoadSampleSchedule}
+                  className="p-3 rounded-2xl bg-surface-elevated border border-surface-border hover:border-brand-cyan/50 text-left transition-all active:scale-95"
+                >
+                  <div className="flex items-center space-x-1.5 text-xs font-bold text-amber-400">
+                    <CalendarRange className="w-3.5 h-3.5" />
+                    <span>Demo Schedule</span>
+                  </div>
+                  <div className="text-[10px] text-gray-400 mt-1">
+                    Test smart slot detection with sample meetings.
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Notification / Status */}
+            {autoFitNotice && (
+              <div className="p-3 rounded-2xl bg-brand-cyan/10 border border-brand-cyan/30 text-xs text-brand-cyan flex items-center space-x-2">
+                <Info className="w-4 h-4 flex-shrink-0" />
+                <span>{autoFitNotice}</span>
+              </div>
+            )}
+
+            {/* Step 2: Auto-Fit Configuration */}
+            <div className="p-4 rounded-2xl bg-surface-elevated border border-surface-border space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div>
+                  <div className="text-xs font-bold text-white">2. Fit Workouts to Free Windows</div>
+                  <div className="text-[11px] text-gray-400">
+                    {importedCalendarEvents.length} calendar commitments currently loaded.
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <span className="text-[11px] font-mono text-gray-400">Preferred Window:</span>
+                  <select
+                    value={fitPreferredPeriod}
+                    onChange={(e) => setFitPreferredPeriod(e.target.value as any)}
+                    className="bg-surface border border-surface-border rounded-xl px-2.5 py-1 text-xs text-white focus:outline-none focus:border-brand-cyan"
+                  >
+                    <option value="morning">Morning (06:00 – 12:00)</option>
+                    <option value="evening">Evening (17:00 – 22:00)</option>
+                    <option value="any">Any Available Window</option>
+                  </select>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleAutoFitWorkouts}
+                disabled={importedCalendarEvents.length === 0}
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-400 to-brand-cyan text-black font-extrabold text-xs shadow-md shadow-brand-cyan/10 active:scale-95 disabled:opacity-50 transition-all flex items-center justify-center space-x-2"
+              >
+                <Zap className="w-4 h-4 fill-current" />
+                <span>Auto-Fit All Workouts to Open Windows</span>
+              </button>
+            </div>
+
+            {/* Step 3: Breakdown by Day */}
+            <div className="overflow-y-auto space-y-2 pr-1 flex-1">
+              <span className="text-xs font-mono uppercase text-gray-400 block">
+                3. Day-by-Day Calendar Free Windows:
+              </span>
+
+              {scheduledWorkouts.map((workout) => {
+                const analysis = analyzeDayCalendarAvailability(
+                  workout.date,
+                  importedCalendarEvents,
+                  workout.durationMinutes,
+                  workout.scheduledTime
+                );
+
+                return (
+                  <div
+                    key={workout.id}
+                    className="p-3 rounded-2xl bg-surface-elevated border border-surface-border text-xs space-y-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <span className="font-bold text-white">
+                          {getDayLabel(workout.date)} ({workout.date})
+                        </span>
+                        <span className="text-gray-400">•</span>
+                        <span className="text-gray-300 truncate max-w-[200px]">
+                          {workout.routineName}
+                        </span>
+                      </div>
+
+                      <span className="font-mono text-brand-cyan">
+                        Workout Time: {workout.scheduledTime || "08:00"}
+                      </span>
+                    </div>
+
+                    {/* Commitments summary */}
+                    <div className="text-[11px] text-gray-400 font-mono">
+                      {analysis.events.length > 0 ? (
+                        <span>
+                          {analysis.events.length} event(s):{" "}
+                          {analysis.events.map((e) => e.title).join(", ")}
+                        </span>
+                      ) : (
+                        <span>No calendar commitments (Whole day free)</span>
+                      )}
+                    </div>
+
+                    {/* Conflict Alert */}
+                    {analysis.hasConflictWithWorkout && (
+                      <div className="text-[11px] font-bold text-brand-rose flex items-center space-x-1">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        <span>{analysis.conflictDetails}</span>
+                      </div>
+                    )}
+
+                    {/* Free Slots */}
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      <span className="text-[10px] font-mono text-gray-400">Available Windows:</span>
+                      {analysis.freeSlots.map((slot, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => handleApplySingleFreeSlot(workout, slot.start)}
+                          className="px-2 py-0.5 rounded-lg bg-surface hover:bg-brand-cyan/20 border border-surface-border hover:border-brand-cyan/40 text-[10px] text-gray-300 hover:text-white font-mono transition-colors"
+                        >
+                          {slot.start} – {slot.end} ({slot.label})
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Bottom Actions */}
+            <div className="flex items-center justify-end pt-3 border-t border-surface-border">
+              <button
+                type="button"
+                onClick={() => setIsCalendarFitModalOpen(false)}
+                className="px-5 py-2.5 rounded-xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border text-xs font-bold text-white transition-colors"
+              >
+                Close & Review Schedule
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          MODAL 3: EDIT SCHEDULED WORKOUT ROUTINE DETAILS
           ========================================================================= */}
       {editingWorkout && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">

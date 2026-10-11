@@ -15,6 +15,14 @@ export interface LocalProfile {
   primaryGoal: 'lean_bulk' | 'recomp';
   targetGainRateLbsPerWeek: number;
   trainingSplit: 'ppl' | 'upper_lower' | 'full_body' | 'custom';
+  workoutDaysPerWeek?: number; // 3, 4, 5, 6
+  customWeeklySchedule?: {
+    [dayOfWeek: number]: {
+      dayType: 'workout' | 'rest';
+      routineKey?: string;
+      preferredTime?: string;
+    };
+  };
   proteinRatioPerLb: number;
   fatPercentage: number;
   baseTdee: number;
@@ -118,6 +126,8 @@ export interface LocalScheduledWorkout {
   isCompleted: boolean;
   completedWorkoutId?: string;
   googleCalendarEventId?: string;
+  calendarConflict?: string;
+  suggestedFreeSlot?: string;
   notes?: string;
   synced: boolean;
   createdAt: string;

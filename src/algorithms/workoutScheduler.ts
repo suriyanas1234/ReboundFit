@@ -149,18 +149,89 @@ export const ROUTINE_TEMPLATES: Record<string, RoutineTemplate> = {
 /**
  * Default Day-of-Week Mapping (0 = Sunday, 1 = Monday, ... 6 = Saturday)
  */
-export function getSplitWeeklyPattern(split: string = "ppl"): RoutineTemplate[] {
+export function getSplitWeeklyPattern(
+  split: string = "ppl",
+  workoutDaysPerWeek?: number,
+  customSchedule?: {
+    [dayOfWeek: number]: {
+      dayType: "workout" | "rest";
+      routineKey?: string;
+      preferredTime?: string;
+    };
+  }
+): RoutineTemplate[] {
+  // 1. Direct custom day mapping if provided
+  if (customSchedule) {
+    const pattern: RoutineTemplate[] = [];
+    for (let day = 0; day < 7; day++) {
+      const cfg = customSchedule[day];
+      if (cfg && cfg.dayType === "workout" && cfg.routineKey && ROUTINE_TEMPLATES[cfg.routineKey]) {
+        pattern.push(ROUTINE_TEMPLATES[cfg.routineKey]);
+      } else {
+        pattern.push(ROUTINE_TEMPLATES.rest);
+      }
+    }
+    return pattern;
+  }
+
+  // 2. Frequency-based split mapping (3, 4, 5, 6, 7 days/week)
+  if (workoutDaysPerWeek) {
+    switch (workoutDaysPerWeek) {
+      case 3:
+        return [
+          ROUTINE_TEMPLATES.rest,        // Sun (0)
+          ROUTINE_TEMPLATES.full_body_a, // Mon (1)
+          ROUTINE_TEMPLATES.rest,        // Tue (2)
+          ROUTINE_TEMPLATES.full_body_b, // Wed (3)
+          ROUTINE_TEMPLATES.rest,        // Thu (4)
+          ROUTINE_TEMPLATES.full_body_c, // Fri (5)
+          ROUTINE_TEMPLATES.rest,        // Sat (6)
+        ];
+      case 4:
+        return [
+          ROUTINE_TEMPLATES.rest,        // Sun (0)
+          ROUTINE_TEMPLATES.upper_a,     // Mon (1)
+          ROUTINE_TEMPLATES.lower_a,     // Tue (2)
+          ROUTINE_TEMPLATES.rest,        // Wed (3)
+          ROUTINE_TEMPLATES.upper_b,     // Thu (4)
+          ROUTINE_TEMPLATES.lower_b,     // Fri (5)
+          ROUTINE_TEMPLATES.rest,        // Sat (6)
+        ];
+      case 5:
+        return [
+          ROUTINE_TEMPLATES.rest,        // Sun (0)
+          ROUTINE_TEMPLATES.push_a,      // Mon (1)
+          ROUTINE_TEMPLATES.pull_a,      // Tue (2)
+          ROUTINE_TEMPLATES.legs_a,      // Wed (3)
+          ROUTINE_TEMPLATES.rest,        // Thu (4)
+          ROUTINE_TEMPLATES.upper_b,     // Fri (5)
+          ROUTINE_TEMPLATES.lower_b,     // Sat (6)
+        ];
+      case 6:
+        return [
+          ROUTINE_TEMPLATES.legs_b,      // Sun (0: Leg Day B)
+          ROUTINE_TEMPLATES.push_a,      // Mon (1: Push Day A)
+          ROUTINE_TEMPLATES.pull_a,      // Tue (2: Pull Day A)
+          ROUTINE_TEMPLATES.legs_a,      // Wed (3: Leg Day A)
+          ROUTINE_TEMPLATES.rest,        // Thu (4: Mid-week Rest)
+          ROUTINE_TEMPLATES.push_b,      // Fri (5: Push Day B)
+          ROUTINE_TEMPLATES.pull_b,      // Sat (6: Pull Day B)
+        ];
+      case 7:
+        return [
+          ROUTINE_TEMPLATES.legs_b,
+          ROUTINE_TEMPLATES.push_a,
+          ROUTINE_TEMPLATES.pull_a,
+          ROUTINE_TEMPLATES.legs_a,
+          ROUTINE_TEMPLATES.push_b,
+          ROUTINE_TEMPLATES.pull_b,
+          ROUTINE_TEMPLATES.upper_a,
+        ];
+    }
+  }
+
+  // 3. Fallback to default split name
   switch (split) {
-    case "ppl":
-      return [
-        ROUTINE_TEMPLATES.legs_b,      // Sun (day 0: Leg Day B)
-        ROUTINE_TEMPLATES.push_a,      // Mon (day 1: Push Day A)
-        ROUTINE_TEMPLATES.pull_a,      // Tue (day 2: Pull Day A)
-        ROUTINE_TEMPLATES.legs_a,      // Wed (day 3: Leg Day A)
-        ROUTINE_TEMPLATES.rest,        // Thu (day 4: Mid-week Rest)
-        ROUTINE_TEMPLATES.push_b,      // Fri (day 5: Push Day B)
-        ROUTINE_TEMPLATES.pull_b,      // Sat (day 6: Pull Day B)
-      ];
     case "upper_lower":
       return [
         ROUTINE_TEMPLATES.rest,        // Sun
@@ -181,15 +252,16 @@ export function getSplitWeeklyPattern(split: string = "ppl"): RoutineTemplate[] 
         ROUTINE_TEMPLATES.full_body_c, // Fri
         ROUTINE_TEMPLATES.rest,        // Sat
       ];
+    case "ppl":
     default:
       return [
-        ROUTINE_TEMPLATES.legs_b,
-        ROUTINE_TEMPLATES.push_a,
-        ROUTINE_TEMPLATES.pull_a,
-        ROUTINE_TEMPLATES.legs_a,
-        ROUTINE_TEMPLATES.rest,
-        ROUTINE_TEMPLATES.push_b,
-        ROUTINE_TEMPLATES.pull_b,
+        ROUTINE_TEMPLATES.legs_b,      // Sun (day 0: Leg Day B)
+        ROUTINE_TEMPLATES.push_a,      // Mon (day 1: Push Day A)
+        ROUTINE_TEMPLATES.pull_a,      // Tue (day 2: Pull Day A)
+        ROUTINE_TEMPLATES.legs_a,      // Wed (day 3: Leg Day A)
+        ROUTINE_TEMPLATES.rest,        // Thu (day 4: Mid-week Rest)
+        ROUTINE_TEMPLATES.push_b,      // Fri (day 5: Push Day B)
+        ROUTINE_TEMPLATES.pull_b,      // Sat (day 6: Pull Day B)
       ];
   }
 }
@@ -227,9 +299,17 @@ export async function ensureWorkoutSchedule(
   userId: string,
   splitType: "ppl" | "upper_lower" | "full_body" | "custom" = "ppl",
   dates: string[],
-  preferredTime: string = "08:00"
+  preferredTime: string = "08:00",
+  workoutDaysPerWeek?: number,
+  customSchedule?: {
+    [dayOfWeek: number]: {
+      dayType: "workout" | "rest";
+      routineKey?: string;
+      preferredTime?: string;
+    };
+  }
 ): Promise<LocalScheduledWorkout[]> {
-  const pattern = getSplitWeeklyPattern(splitType);
+  const pattern = getSplitWeeklyPattern(splitType, workoutDaysPerWeek, customSchedule);
   const existing = await db.scheduledWorkouts
     .where("userId")
     .equals(userId)
@@ -244,10 +324,12 @@ export async function ensureWorkoutSchedule(
   for (const date of dates) {
     const existingRecord = existingMap.get(date);
     if (existingRecord) {
-      // Heal previously cached Sunday rest records in PPL if not completed
+      // Heal previously cached Sunday rest records in default PPL if not completed
       const d = new Date(date + "T00:00:00");
       if (
         splitType === "ppl" &&
+        !workoutDaysPerWeek &&
+        !customSchedule &&
         d.getDay() === 0 &&
         existingRecord.dayType === "rest" &&
         !existingRecord.isCompleted
@@ -303,13 +385,77 @@ export async function ensureWorkoutSchedule(
 }
 
 /**
+ * Overwrites/applies a customized weekly schedule across the given dates,
+ * preserving any already completed workouts.
+ */
+export async function applyCustomWeeklySchedule(
+  userId: string,
+  dates: string[],
+  pattern: RoutineTemplate[],
+  preferredTime: string = "08:00"
+): Promise<LocalScheduledWorkout[]> {
+  const existing = await db.scheduledWorkouts
+    .where("userId")
+    .equals(userId)
+    .and((item) => dates.includes(item.date))
+    .toArray();
+
+  const existingMap = new Map<string, LocalScheduledWorkout>();
+  existing.forEach((item) => existingMap.set(item.date, item));
+
+  const updatedRecords: LocalScheduledWorkout[] = [];
+
+  for (const date of dates) {
+    const d = new Date(date + "T00:00:00");
+    const dayOfWeek = d.getDay();
+    const template = pattern[dayOfWeek] || ROUTINE_TEMPLATES.rest;
+    const existingRec = existingMap.get(date);
+
+    const isCompleted = existingRec ? existingRec.isCompleted : false;
+    const completedWorkoutId = existingRec?.completedWorkoutId;
+
+    const record: LocalScheduledWorkout = {
+      id: `sched-${userId}-${date}`,
+      userId,
+      date,
+      routineName: template.name,
+      splitType: template.splitType,
+      dayType: template.dayType,
+      focusMuscleGroups: template.focusMuscleGroups,
+      exerciseIds: template.exerciseIds,
+      scheduledTime: existingRec?.scheduledTime || preferredTime,
+      durationMinutes: template.defaultDurationMinutes,
+      isCompleted,
+      completedWorkoutId,
+      notes: template.description,
+      synced: false,
+      createdAt: existingRec?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    updatedRecords.push(record);
+  }
+
+  await db.scheduledWorkouts.bulkPut(updatedRecords);
+  return updatedRecords;
+}
+
+/**
  * Gets or creates the scheduled workout for a specific date (e.g. today).
  */
 export async function getOrCreateScheduledWorkoutForDate(
   userId: string,
   date: string,
   splitType: "ppl" | "upper_lower" | "full_body" | "custom" = "ppl",
-  preferredTime: string = "08:00"
+  preferredTime: string = "08:00",
+  workoutDaysPerWeek?: number,
+  customSchedule?: {
+    [dayOfWeek: number]: {
+      dayType: "workout" | "rest";
+      routineKey?: string;
+      preferredTime?: string;
+    };
+  }
 ): Promise<LocalScheduledWorkout> {
   const existing = await db.scheduledWorkouts
     .where("userId")
@@ -321,6 +467,8 @@ export async function getOrCreateScheduledWorkoutForDate(
     const d = new Date(date + "T00:00:00");
     if (
       splitType === "ppl" &&
+      !workoutDaysPerWeek &&
+      !customSchedule &&
       d.getDay() === 0 &&
       existing.dayType === "rest" &&
       !existing.isCompleted
@@ -342,7 +490,14 @@ export async function getOrCreateScheduledWorkoutForDate(
     return existing;
   }
 
-  const [created] = await ensureWorkoutSchedule(userId, splitType, [date], preferredTime);
+  const [created] = await ensureWorkoutSchedule(
+    userId,
+    splitType,
+    [date],
+    preferredTime,
+    workoutDaysPerWeek,
+    customSchedule
+  );
   return created;
 }
 

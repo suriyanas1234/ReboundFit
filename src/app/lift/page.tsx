@@ -98,7 +98,14 @@ export default function LiftTrackerPage() {
       let targetScheduled = explicitScheduled;
       if (!targetScheduled) {
         const split = (profile?.trainingSplit || "ppl") as any;
-        targetScheduled = await getOrCreateScheduledWorkoutForDate(user.id, targetDate, split);
+        targetScheduled = await getOrCreateScheduledWorkoutForDate(
+          user.id,
+          targetDate,
+          split,
+          "08:00",
+          profile?.workoutDaysPerWeek,
+          profile?.customWeeklySchedule as any
+        );
       }
 
       setScheduledDay(targetScheduled);
