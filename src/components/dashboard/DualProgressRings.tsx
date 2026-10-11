@@ -24,6 +24,15 @@ export function DualProgressRings({
   consumedFat,
   targetFat,
 }: DualProgressRingsProps) {
+  const safeCalories = Math.max(0, Number(consumedCalories || 0));
+  const safeTargetCalories = Math.max(1, Number(targetCalories || 2600));
+  const safeProtein = Math.max(0, Number(consumedProtein || 0));
+  const safeTargetProtein = Math.max(1, Number(targetProtein || 160));
+  const safeCarbs = Math.max(0, Number(consumedCarbs || 0));
+  const safeTargetCarbs = Math.max(1, Number(targetCarbs || 315));
+  const safeFat = Math.max(0, Number(consumedFat || 0));
+  const safeTargetFat = Math.max(1, Number(targetFat || 74));
+
   // SVG Ring geometry
   const size = 200;
   const strokeWidth = 12;
@@ -31,17 +40,17 @@ export function DualProgressRings({
   // Calorie ring (outer)
   const radiusCal = (size - strokeWidth) / 2;
   const circumferenceCal = 2 * Math.PI * radiusCal;
-  const calPercent = Math.min(100, Math.max(0, (consumedCalories / targetCalories) * 100));
-  const strokeDashoffsetCal = circumferenceCal - (calPercent / 100) * circumferenceCal;
+  const calPercent = Math.min(100, Math.max(0, (safeCalories / safeTargetCalories) * 100));
+  const strokeDashoffsetCal = isNaN(calPercent) ? circumferenceCal : circumferenceCal - (calPercent / 100) * circumferenceCal;
 
   // Protein ring (inner)
   const radiusPro = radiusCal - strokeWidth - 6;
   const circumferencePro = 2 * Math.PI * radiusPro;
-  const proPercent = Math.min(100, Math.max(0, (consumedProtein / targetProtein) * 100));
-  const strokeDashoffsetPro = circumferencePro - (proPercent / 100) * circumferencePro;
+  const proPercent = Math.min(100, Math.max(0, (safeProtein / safeTargetProtein) * 100));
+  const strokeDashoffsetPro = isNaN(proPercent) ? circumferencePro : circumferencePro - (proPercent / 100) * circumferencePro;
 
-  const remainingCalories = Math.max(0, targetCalories - consumedCalories);
-  const remainingProtein = Math.max(0, targetProtein - consumedProtein);
+  const remainingCalories = Math.max(0, safeTargetCalories - safeCalories);
+  const remainingProtein = Math.max(0, safeTargetProtein - safeProtein);
 
   return (
     <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl flex flex-col justify-between">

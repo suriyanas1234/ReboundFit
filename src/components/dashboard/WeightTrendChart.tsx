@@ -34,9 +34,11 @@ export function WeightTrendChart({ data, onOpenWeighIn }: WeightTrendChartProps)
     );
   }
 
-  const latest = data[data.length - 1];
-  const earliest = data[0];
-  const deltaWeight = latest.trendWeightLbs - earliest.trendWeightLbs;
+  const latest = data[data.length - 1] || { rawWeightLbs: 0, trendWeightLbs: 0, date: "" };
+  const earliest = data[0] || latest;
+  const latestWeight = Number(latest.trendWeightLbs ?? latest.rawWeightLbs ?? 0);
+  const earliestWeight = Number(earliest.trendWeightLbs ?? earliest.rawWeightLbs ?? latestWeight);
+  const deltaWeight = latestWeight - earliestWeight;
 
   // Single Point State: 1 baseline weigh-in recorded
   if (data.length === 1) {
@@ -54,7 +56,7 @@ export function WeightTrendChart({ data, onOpenWeighIn }: WeightTrendChartProps)
             </div>
             <div className="flex items-baseline space-x-3 mt-1">
               <h3 className="text-2xl font-black text-white font-mono">
-                {latest.rawWeightLbs.toFixed(1)} lbs
+                {Number(latest.rawWeightLbs || 0).toFixed(1)} lbs
               </h3>
               <span className="text-xs text-gray-400 font-mono">Starting Weight</span>
             </div>
@@ -88,17 +90,19 @@ export function WeightTrendChart({ data, onOpenWeighIn }: WeightTrendChartProps)
   const paddingX = 40;
   const paddingY = 30;
 
-  const allValues = data.flatMap((d) => [d.rawWeightLbs, d.trendWeightLbs]);
-  const minVal = Math.floor(Math.min(...allValues) - 0.5);
-  const maxVal = Math.ceil(Math.max(...allValues) + 0.5);
+  const allValues = data
+    .flatMap((d) => [d?.rawWeightLbs, d?.trendWeightLbs])
+    .filter((v): v is number => typeof v === "number" && !isNaN(v) && v > 0);
+  const minVal = allValues.length > 0 ? Math.floor(Math.min(...allValues) - 0.5) : 150;
+  const maxVal = allValues.length > 0 ? Math.ceil(Math.max(...allValues) + 0.5) : 180;
   const valRange = Math.max(1, maxVal - minVal);
 
   const getX = (index: number) => {
-    return paddingX + (index / (data.length - 1)) * (width - 2 * paddingX);
+    return paddingX + (index / Math.max(1, data.length - 1)) * (width - 2 * paddingX);
   };
 
   const getY = (val: number) => {
-    return height - paddingY - ((val - minVal) / valRange) * (height - 2 * paddingY);
+    return height - paddingY - ((Number(val || minVal) - minVal) / valRange) * (height - 2 * paddingY);
   };
 
   const trendPoints = data.map((d, i) => ({ x: getX(i), y: getY(d.trendWeightLbs) }));
@@ -124,7 +128,7 @@ export function WeightTrendChart({ data, onOpenWeighIn }: WeightTrendChartProps)
           </div>
           <div className="flex items-baseline space-x-3 mt-1">
             <h3 className="text-2xl font-black text-white font-mono">
-              {latest.trendWeightLbs.toFixed(1)} lbs
+              {latestWeight.toFixed(1)} lbs
             </h3>
             <span className="text-xs text-brand-emerald font-semibold flex items-center">
               <TrendingUp className="w-3.5 h-3.5 mr-1" />

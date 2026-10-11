@@ -20,9 +20,15 @@ export function QuickWeighInModal({
 }: QuickWeighInModalProps) {
   const { user } = useAuth();
   const { saveWeighIn } = useCloudSync();
-  const [weight, setWeight] = useState<number>(lastWeightLbs || 175.0);
+  const [weight, setWeight] = useState<number>(Number(lastWeightLbs) || 175.0);
   const [unit, setUnit] = useState<"lbs" | "kg">("lbs");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  React.useEffect(() => {
+    if (lastWeightLbs && lastWeightLbs > 0) {
+      setWeight(Number(lastWeightLbs));
+    }
+  }, [lastWeightLbs, isOpen]);
 
   if (!isOpen) return null;
 

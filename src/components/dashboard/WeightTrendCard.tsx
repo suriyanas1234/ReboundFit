@@ -6,32 +6,42 @@ import { Scale, ChevronRight, TrendingUp, Plus } from "lucide-react";
 import { SmoothedWeightPoint } from "@/algorithms/weightTrend";
 
 interface WeightTrendCardProps {
-  trendWeightLbs: number;
-  rateOfGainLbsPerWeek: number;
+  trendWeightLbs?: number;
+  rateOfGainLbsPerWeek?: number;
   targetGainRateLbsPerWeek?: number;
-  trendData: SmoothedWeightPoint[];
+  trendData?: SmoothedWeightPoint[];
   gainZone?: string;
   onOpenWeighIn?: () => void;
 }
 
 export function WeightTrendCard({
-  trendWeightLbs,
-  rateOfGainLbsPerWeek,
+  trendWeightLbs = 0,
+  rateOfGainLbsPerWeek = 0,
   targetGainRateLbsPerWeek = 0.35,
-  trendData,
+  trendData = [],
   gainZone = "sweet_spot",
   onOpenWeighIn,
 }: WeightTrendCardProps) {
+  const safeTrendWeight = Number(trendWeightLbs || 0);
+  const safeRateOfGain = Number(rateOfGainLbsPerWeek || 0);
+  const safeTargetGain = Number(targetGainRateLbsPerWeek || 0.35);
+
   // Sparkline data preparation: 7 points
-  const recentPoints = trendData.length > 0 ? trendData.slice(-7) : [];
-  const weights = recentPoints.map((p) => p.trendWeightLbs);
-  const minW = weights.length > 0 ? Math.min(...weights) : trendWeightLbs - 1;
-  const maxW = weights.length > 0 ? Math.max(...weights) : trendWeightLbs + 1;
+  const recentPoints = Array.isArray(trendData) && trendData.length > 0 ? trendData.slice(-7) : [];
+  
+  // Extract strictly valid numeric weights
+  const validWeights = recentPoints
+    .map((p) => Number(p?.trendWeightLbs ?? p?.rawWeightLbs ?? 0))
+    .filter((w) => !isNaN(w) && w > 0);
+
+  const minW = validWeights.length > 0 ? Math.min(...validWeights) : Math.max(1, safeTrendWeight - 1);
+  const maxW = validWeights.length > 0 ? Math.max(...validWeights) : safeTrendWeight + 1;
   const weightSpan = Math.max(0.5, maxW - minW);
 
   // Day labels for 7 days
   const dayLabels = recentPoints.map((p) => {
     try {
+      if (!p?.date) return "•";
       const d = new Date(p.date + "T12:00:00");
       return d.toLocaleDateString("en-US", { weekday: "narrow" }); // M, T, W...
     } catch {
@@ -39,7 +49,8 @@ export function WeightTrendCard({
     }
   });
 
-  const isSweetSpot = gainZone === "sweet_spot" || (rateOfGainLbsPerWeek >= 0.2 && rateOfGainLbsPerWeek <= 0.5);
+  const isSweetSpot =
+    gainZone === "sweet_spot" || (safeRateOfGain >= 0.2 && safeRateOfGain <= 0.5);
 
   return (
     <div className="group block p-4 sm:p-5 rounded-[22px] bg-[#1C1C1E] border border-[#2C2C2E]/80 hover:border-[#38383A] transition-all duration-200 shadow-lg shadow-black/40 min-h-[160px]">
@@ -84,7 +95,7 @@ export function WeightTrendCard({
       <div className="flex flex-wrap items-baseline justify-between gap-2 mt-2">
         <div className="flex items-baseline space-x-1.5 min-w-0">
           <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight font-sans truncate">
-            {trendWeightLbs > 0 ? trendWeightLbs.toFixed(1) : "--.-"}
+            {safeTrendWeight > 0 ? safeTrendWeight.toFixed(1) : "--.-"}
           </span>
           <span className="text-sm sm:text-base font-semibold text-[#8E8E93] whitespace-nowrap">
             lbs
@@ -100,9 +111,9 @@ export function WeightTrendCard({
         >
           <TrendingUp className="w-3 h-3" />
           <span>
-            {rateOfGainLbsPerWeek > 0
-              ? `+${rateOfGainLbsPerWeek.toFixed(2)}`
-              : rateOfGainLbsPerWeek.toFixed(2)}{" "}
+            {safeRateOfGain > 0
+              ? `+${safeRateOfGain.toFixed(2)}`
+              : safeRateOfGain.toFixed(2)}{" "}
             lbs/wk
           </span>
         </span>
@@ -113,9 +124,10 @@ export function WeightTrendCard({
         <div className="flex items-end gap-1.5 h-12 w-full">
           {recentPoints.length > 0 ? (
             recentPoints.map((pt, i) => {
+              const ptVal = Number(pt?.trendWeightLbs ?? pt?.rawWeightLbs ?? safeTrendWeight);
               const normalizedHeight = Math.max(
                 16,
-                Math.min(48, Math.round(((pt.trendWeightLbs - minW) / weightSpan) * 36) + 12)
+                Math.min(48, Math.round(((ptVal - minW) / weightSpan) * 36) + 12)
               );
               const isLatest = i === recentPoints.length - 1;
 
@@ -128,7 +140,7 @@ export function WeightTrendCard({
                         : "bg-[#AF52DE]/35 hover:bg-[#AF52DE]/60"
                     }`}
                     style={{ height: `${normalizedHeight}px` }}
-                    title={`${pt.date}: ${pt.trendWeightLbs.toFixed(1)} lbs`}
+                    title={`${pt?.date || ""}: ${ptVal.toFixed(1)} lbs`}
                   />
                   <span className="text-[10px] font-mono text-[#8E8E93] group-hover/bar:text-white">
                     {dayLabels[i] || "•"}
@@ -147,7 +159,8 @@ export function WeightTrendCard({
       {/* Footer Meta Row */}
       <div className="flex items-center justify-between text-xs text-[#8E8E93] pt-3 mt-1 border-t border-[#2C2C2E]">
         <span className="truncate">
-          Target Gain: <strong className="text-white font-medium">+{targetGainRateLbsPerWeek} lbs/wk</strong>
+          Target Gain:{" "}
+          <strong className="text-white font-medium">+{safeTargetGain} lbs/wk</strong>
         </span>
         <span
           className={`text-[11px] font-semibold font-mono flex-shrink-0 ${

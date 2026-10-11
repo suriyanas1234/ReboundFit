@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/context/AuthContext";
+import { CloudSyncProvider } from "@/hooks/useCloudSync";
 import { AppShell } from "@/components/layout/AppShell";
 
 export const metadata: Metadata = {
@@ -39,7 +40,9 @@ export default function RootLayout({
       </head>
       <body className="bg-background text-white antialiased min-h-screen">
         <AuthProvider>
-          <AppShell>{children}</AppShell>
+          <CloudSyncProvider>
+            <AppShell>{children}</AppShell>
+          </CloudSyncProvider>
         </AuthProvider>
       </body>
     </html>

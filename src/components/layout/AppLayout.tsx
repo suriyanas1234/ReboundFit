@@ -26,6 +26,7 @@ import { useCloudSync } from "@/hooks/useCloudSync";
 import { AuthScreen } from "@/components/auth/AuthScreen";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { QuickWeighInModal } from "@/components/dashboard/QuickWeighInModal";
+import { ErrorBoundary } from "@/components/layout/ErrorBoundary";
 
 interface AppLayoutProps {
   children: React.ReactNode;
@@ -220,7 +221,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         {/* Dynamic iOS / Desktop Route Content */}
         <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 lg:p-8 pb-28 md:pb-8 pt-safe">
           <div className="w-full max-w-7xl mx-auto space-y-6">
-            {children}
+            <ErrorBoundary>{children}</ErrorBoundary>
           </div>
         </main>
 

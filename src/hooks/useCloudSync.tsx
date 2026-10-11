@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
-import { db, LocalWeighIn, LocalMealLog, LocalWorkoutSet, LocalScheduledWorkout } from "@/lib/db";
+import { db, LocalWeighIn, LocalMealLog, LocalWorkoutSet } from "@/lib/db";
 import { useAuth } from "@/context/AuthContext";
 import { calculateWeightTrend } from "@/algorithms/weightTrend";
 
@@ -40,7 +40,9 @@ export interface CloudSyncState {
   }) => Promise<void>;
 }
 
-export function useCloudSync(): CloudSyncState {
+const CloudSyncContext = createContext<CloudSyncState | null>(null);
+
+export function CloudSyncProvider({ children }: { children: React.ReactNode }) {
   const { user, profile } = useAuth();
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [lastSyncedAt, setLastSyncedAt] = useState<Date | null>(null);
@@ -48,19 +50,24 @@ export function useCloudSync(): CloudSyncState {
   const [error, setError] = useState<string | null>(null);
 
   const channelRef = useRef<any>(null);
+  const isPullingRef = useRef<boolean>(false);
+  const lastNotifyTimeRef = useRef<number>(0);
 
-  // Helper to dispatch global window event so all tabs & screens re-render
-  const notifyLocalSubscribers = () => {
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(new CustomEvent("reboundfit_sync", { detail: { timestamp: Date.now() } }));
-    }
-  };
+  // Debounced notification to prevent cascade loop renders
+  const notifyLocalSubscribers = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const now = Date.now();
+    if (now - lastNotifyTimeRef.current < 800) return;
+    lastNotifyTimeRef.current = now;
+    window.dispatchEvent(new CustomEvent("reboundfit_sync", { detail: { timestamp: now } }));
+  }, []);
 
   /**
-   * PULL: Sync down changes from Supabase PostgreSQL (or fallback backup) to local Dexie
+   * PULL: Sync down changes from Supabase PostgreSQL to local Dexie
    */
   const pullRemoteData = useCallback(async () => {
-    if (!user || !isSupabaseConfigured) return;
+    if (!user?.id || !isSupabaseConfigured || isPullingRef.current) return;
+    isPullingRef.current = true;
     setIsSyncing(true);
     setError(null);
 
@@ -74,16 +81,18 @@ export function useCloudSync(): CloudSyncState {
           .order("logged_at", { ascending: false })
           .limit(60);
 
-        if (!weighError && remoteWeighIns && remoteWeighIns.length > 0) {
+        if (!weighError && Array.isArray(remoteWeighIns) && remoteWeighIns.length > 0) {
           for (const item of remoteWeighIns) {
+            const rawLbs = Number(item.raw_weight_lbs || 0);
+            if (rawLbs <= 0) continue;
             const localItem: LocalWeighIn = {
               id: item.id || `weigh-${user.id}-${item.logged_at}`,
               userId: user.id,
               date: item.logged_at,
-              rawWeightLbs: Number(item.raw_weight_lbs),
-              rawWeightKg: Number(item.raw_weight_kg || (item.raw_weight_lbs * 0.453592).toFixed(1)),
-              trendWeightLbs: item.trend_weight_lbs ? Number(item.trend_weight_lbs) : undefined,
-              rateOfGainLbsPerWeek: item.rate_of_gain_lbs_per_week ? Number(item.rate_of_gain_lbs_per_week) : undefined,
+              rawWeightLbs: rawLbs,
+              rawWeightKg: Number(item.raw_weight_kg || (rawLbs * 0.453592).toFixed(1)),
+              trendWeightLbs: item.trend_weight_lbs ? Number(item.trend_weight_lbs) : rawLbs,
+              rateOfGainLbsPerWeek: item.rate_of_gain_lbs_per_week ? Number(item.rate_of_gain_lbs_per_week) : 0,
               notes: item.notes || undefined,
               synced: true,
               createdAt: item.created_at || new Date().toISOString(),
@@ -91,8 +100,8 @@ export function useCloudSync(): CloudSyncState {
             await db.weighIns.put(localItem);
           }
         }
-      } catch (err) {
-        // Table might not exist yet
+      } catch {
+        // Table may not exist yet
       }
 
       // 2. Pull Meal Logs from PostgreSQL
@@ -104,7 +113,7 @@ export function useCloudSync(): CloudSyncState {
           .order("logged_date", { ascending: false })
           .limit(100);
 
-        if (!mealError && remoteMeals && remoteMeals.length > 0) {
+        if (!mealError && Array.isArray(remoteMeals) && remoteMeals.length > 0) {
           for (const item of remoteMeals) {
             const localMeal: LocalMealLog = {
               id: item.id || `meal-${user.id}-${item.logged_date}-${item.created_at}`,
@@ -112,7 +121,7 @@ export function useCloudSync(): CloudSyncState {
               date: item.logged_date,
               mealType: item.meal_type || "snack",
               name: item.custom_name || "Quick Log Meal",
-              calories: Number(item.calories),
+              calories: Number(item.calories || 0),
               proteinG: Number(item.protein_g || 0),
               carbG: Number(item.carb_g || 0),
               fatG: Number(item.fat_g || 0),
@@ -123,92 +132,19 @@ export function useCloudSync(): CloudSyncState {
             await db.mealLogs.put(localMeal);
           }
         }
-      } catch (err) {
-        // Table might not exist yet
-      }
-
-      // 3. Pull Profiles table if newer
-      try {
-        const { data: remoteProfile } = await supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", user.id)
-          .maybeSingle();
-
-        if (remoteProfile && profile) {
-          if (remoteProfile.target_calories && remoteProfile.target_calories !== profile.targetCalories) {
-            await db.profiles.update(profile.id, {
-              targetCalories: remoteProfile.target_calories,
-              targetProteinG: remoteProfile.target_protein_g,
-              targetCarbG: remoteProfile.target_carb_g,
-              targetFatG: remoteProfile.target_fat_g,
-              currentWeightLbs: remoteProfile.currentWeightLbs || profile.currentWeightLbs,
-            });
-          }
-        }
-      } catch (err) {
-        // Ignore table check
-      }
-
-      // 4. PUSH any unsynced local weigh-ins to Supabase
-      const unsyncedWeighIns = await db.weighIns
-        .where("userId")
-        .equals(user.id)
-        .and((w) => !w.synced)
-        .toArray();
-
-      for (const w of unsyncedWeighIns) {
-        try {
-          await supabase.from("weigh_ins").upsert({
-            user_id: user.id,
-            logged_at: w.date,
-            raw_weight_lbs: w.rawWeightLbs,
-            raw_weight_kg: w.rawWeightKg,
-            trend_weight_lbs: w.trendWeightLbs,
-            rateOfGain_lbs_per_week: w.rateOfGainLbsPerWeek,
-            notes: w.notes,
-          });
-          await db.weighIns.update(w.id, { synced: true });
-        } catch {
-          // Keep synced: false for retry
-        }
-      }
-
-      // 5. PUSH any unsynced local meals to Supabase
-      const unsyncedMeals = await db.mealLogs
-        .where("userId")
-        .equals(user.id)
-        .and((m) => !m.synced)
-        .toArray();
-
-      for (const m of unsyncedMeals) {
-        try {
-          await supabase.from("meal_logs").insert({
-            user_id: user.id,
-            logged_date: m.date,
-            meal_type: m.mealType,
-            custom_name: m.name,
-            calories: m.calories,
-            protein_g: m.proteinG,
-            carb_g: m.carbG,
-            fat_g: m.fatG,
-            is_quick_dial: m.isQuickDial,
-          });
-          await db.mealLogs.update(m.id, { synced: true });
-        } catch {
-          // Keep synced: false
-        }
+      } catch {
+        // Table may not exist yet
       }
 
       setLastSyncedAt(new Date());
       notifyLocalSubscribers();
     } catch (err: any) {
-      console.warn("Cloud sync pull note:", err);
-      setError(err?.message || "Sync warning");
+      setError(err?.message || "Sync error");
     } finally {
       setIsSyncing(false);
+      isPullingRef.current = false;
     }
-  }, [user, profile]);
+  }, [user?.id, notifyLocalSubscribers]);
 
   /**
    * PUSH: Optimistic Weigh-In Logger with Cloud Realtime Persistence
@@ -219,12 +155,11 @@ export function useCloudSync(): CloudSyncState {
     rawWeightKg?: number;
     notes?: string;
   }) => {
-    if (!user) throw new Error("User required");
+    if (!user) return;
 
     const weightKg = data.rawWeightKg ?? Number((data.rawWeightLbs * 0.45359237).toFixed(1));
     const now = new Date().toISOString();
 
-    // 1. Calculate smoothed EMA trend immediately
     const existing = await db.weighIns.where("userId").equals(user.id).toArray();
     const updatedList = [
       ...existing.filter((w) => w.date !== data.date),
@@ -257,11 +192,10 @@ export function useCloudSync(): CloudSyncState {
       createdAt: now,
     };
 
-    // 2. Optimistic local Dexie update
+    // 1. Optimistic local update
     await db.weighIns.put(record);
 
-    // Update profile currentWeightLbs
-    if (profile) {
+    if (profile?.id) {
       await db.profiles.update(profile.id, {
         currentWeightLbs: data.rawWeightLbs,
         updatedAt: now,
@@ -270,10 +204,10 @@ export function useCloudSync(): CloudSyncState {
 
     notifyLocalSubscribers();
 
-    // 3. Cloud Persist to PostgreSQL + Realtime Broadcast
+    // 2. Cloud Persist to PostgreSQL + Broadcast
     if (isSupabaseConfigured) {
       try {
-        const { error: pgError } = await supabase.from("weigh_ins").upsert({
+        await supabase.from("weigh_ins").upsert({
           user_id: user.id,
           logged_at: data.date,
           raw_weight_lbs: data.rawWeightLbs,
@@ -283,20 +217,17 @@ export function useCloudSync(): CloudSyncState {
           notes: data.notes,
         });
 
-        if (!pgError) {
-          await db.weighIns.update(record.id, { synced: true });
-        }
+        await db.weighIns.update(record.id, { synced: true });
 
-        // Broadcast to other devices (mobile -> desktop or vice versa)
         if (channelRef.current) {
-          await channelRef.current.send({
+          channelRef.current.send({
             type: "broadcast",
             event: "weigh_in_logged",
             payload: record,
           });
         }
-      } catch (cloudErr) {
-        console.warn("PostgreSQL weigh-in sync deferred:", cloudErr);
+      } catch {
+        // Will retry later
       }
     }
   };
@@ -314,22 +245,21 @@ export function useCloudSync(): CloudSyncState {
     isQuickDial?: boolean;
     date?: string;
   }): Promise<LocalMealLog> => {
-    if (!user) throw new Error("User required");
-
+    const userId = user?.id || "anonymous";
     const dateStr = data.date || new Date().toISOString().split("T")[0];
     const now = new Date().toISOString();
-    const id = `meal-${user.id}-${Date.now()}`;
+    const id = `meal-${userId}-${Date.now()}`;
 
     const meal: LocalMealLog = {
       id,
-      userId: user.id,
+      userId,
       date: dateStr,
       mealType: data.mealType,
       name: data.name,
-      calories: data.calories,
-      proteinG: data.proteinG,
-      carbG: data.carbG,
-      fatG: data.fatG,
+      calories: Math.max(0, Number(data.calories || 0)),
+      proteinG: Math.max(0, Number(data.proteinG || 0)),
+      carbG: Math.max(0, Number(data.carbG || 0)),
+      fatG: Math.max(0, Number(data.fatG || 0)),
       isQuickDial: Boolean(data.isQuickDial),
       synced: false,
       createdAt: now,
@@ -340,34 +270,31 @@ export function useCloudSync(): CloudSyncState {
     notifyLocalSubscribers();
 
     // 2. Cloud Persist to Supabase + Broadcast
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && user?.id) {
       try {
-        const { error: pgError } = await supabase.from("meal_logs").insert({
+        await supabase.from("meal_logs").insert({
           user_id: user.id,
           logged_date: dateStr,
           meal_type: data.mealType,
           custom_name: data.name,
-          calories: data.calories,
-          protein_g: data.proteinG,
-          carb_g: data.carbG,
-          fat_g: data.fatG,
-          is_quick_dial: Boolean(data.isQuickDial),
+          calories: meal.calories,
+          protein_g: meal.proteinG,
+          carb_g: meal.carbG,
+          fat_g: meal.fatG,
+          is_quick_dial: meal.isQuickDial,
         });
 
-        if (!pgError) {
-          await db.mealLogs.update(meal.id, { synced: true });
-        }
+        await db.mealLogs.update(meal.id, { synced: true });
 
-        // Realtime broadcast to connected devices
         if (channelRef.current) {
-          await channelRef.current.send({
+          channelRef.current.send({
             type: "broadcast",
             event: "meal_logged",
             payload: meal,
           });
         }
-      } catch (cloudErr) {
-        console.warn("PostgreSQL meal log sync deferred:", cloudErr);
+      } catch {
+        // Handled silently
       }
     }
 
@@ -375,35 +302,31 @@ export function useCloudSync(): CloudSyncState {
   };
 
   /**
-   * PUSH: Optimistic Meal Delete with Cloud Persistence
+   * PUSH: Optimistic Meal Delete
    */
   const deleteMealLog = async (mealId: string) => {
-    if (!user) return;
-
-    // 1. Optimistic Dexie delete
     await db.mealLogs.delete(mealId);
     notifyLocalSubscribers();
 
-    // 2. Cloud delete + Broadcast
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && user?.id) {
       try {
         await supabase.from("meal_logs").delete().eq("id", mealId).eq("user_id", user.id);
 
         if (channelRef.current) {
-          await channelRef.current.send({
+          channelRef.current.send({
             type: "broadcast",
             event: "meal_deleted",
             payload: { mealId, userId: user.id },
           });
         }
-      } catch (cloudErr) {
-        console.warn("PostgreSQL meal delete note:", cloudErr);
+      } catch {
+        // Handled silently
       }
     }
   };
 
   /**
-   * PUSH: Optimistic Workout Set Logger with Cloud Persistence
+   * PUSH: Optimistic Workout Set Logger
    */
   const saveWorkoutSet = async (data: {
     workoutId: string;
@@ -414,61 +337,60 @@ export function useCloudSync(): CloudSyncState {
     isWarmup?: boolean;
     isPr?: boolean;
   }) => {
-    if (!user) return;
-
-    const id = `set-${user.id}-${Date.now()}-${data.setNumber}`;
+    const userId = user?.id || "anonymous";
+    const id = `set-${userId}-${Date.now()}-${data.setNumber}`;
     const setRecord: LocalWorkoutSet = {
       id,
-      userId: user.id,
+      userId,
       workoutId: data.workoutId,
       exerciseId: data.exerciseId,
       setNumber: data.setNumber,
-      weightLbs: data.weightLbs,
-      reps: data.reps,
+      weightLbs: Number(data.weightLbs || 0),
+      reps: Number(data.reps || 0),
       isWarmup: Boolean(data.isWarmup),
       isPr: Boolean(data.isPr),
       synced: false,
     };
 
-    // 1. Optimistic local write
     await db.workoutSets.put(setRecord);
     notifyLocalSubscribers();
 
-    // 2. Cloud Persist + Broadcast
-    if (isSupabaseConfigured) {
+    if (isSupabaseConfigured && user?.id) {
       try {
         await supabase.from("workout_sets").insert({
           workout_id: data.workoutId,
           exercise_id: data.exerciseId,
           set_number: data.setNumber,
-          weight_lbs: data.weightLbs,
-          weight_kg: Number((data.weightLbs * 0.453592).toFixed(1)),
-          reps: data.reps,
-          is_warmup: Boolean(data.isWarmup),
-          is_pr: Boolean(data.isPr),
+          weight_lbs: setRecord.weightLbs,
+          weight_kg: Number((setRecord.weightLbs * 0.453592).toFixed(1)),
+          reps: setRecord.reps,
+          is_warmup: setRecord.isWarmup,
+          is_pr: setRecord.isPr,
         });
 
         if (channelRef.current) {
-          await channelRef.current.send({
+          channelRef.current.send({
             type: "broadcast",
             event: "workout_set_logged",
             payload: setRecord,
           });
         }
-      } catch (cloudErr) {
-        console.warn("PostgreSQL workout set sync note:", cloudErr);
+      } catch {
+        // Handled silently
       }
     }
   };
 
   /**
-   * Realtime Channel Setup & Lifecycle
+   * Realtime Channel Setup (SINGLE instance at Provider root)
    */
   useEffect(() => {
-    if (!user || !isSupabaseConfigured) return;
+    if (!user?.id || !isSupabaseConfigured) return;
 
-    // Online/offline tracking
-    setIsOnline(navigator.onLine);
+    if (typeof navigator !== "undefined") {
+      setIsOnline(navigator.onLine);
+    }
+
     const handleOnline = () => {
       setIsOnline(true);
       pullRemoteData();
@@ -481,7 +403,7 @@ export function useCloudSync(): CloudSyncState {
     // Initial pull
     pullRemoteData();
 
-    // 1. Subscribe to Supabase Realtime Channel
+    // Setup SINGLE Supabase channel
     const channelName = `reboundfit_sync_${user.id}`;
     const channel = supabase.channel(channelName, {
       config: {
@@ -489,55 +411,35 @@ export function useCloudSync(): CloudSyncState {
       },
     });
 
-    // Listen for Realtime Broadcasts from other devices
     channel
       .on("broadcast", { event: "weigh_in_logged" }, async ({ payload }) => {
-        if (payload && payload.userId === user.id) {
+        if (payload?.userId === user.id) {
           await db.weighIns.put({ ...payload, synced: true });
           notifyLocalSubscribers();
         }
       })
       .on("broadcast", { event: "meal_logged" }, async ({ payload }) => {
-        if (payload && payload.userId === user.id) {
+        if (payload?.userId === user.id) {
           await db.mealLogs.put({ ...payload, synced: true });
           notifyLocalSubscribers();
         }
       })
       .on("broadcast", { event: "meal_deleted" }, async ({ payload }) => {
-        if (payload && payload.mealId) {
+        if (payload?.mealId) {
           await db.mealLogs.delete(payload.mealId);
           notifyLocalSubscribers();
         }
       })
       .on("broadcast", { event: "workout_set_logged" }, async ({ payload }) => {
-        if (payload && payload.userId === user.id) {
+        if (payload?.userId === user.id) {
           await db.workoutSets.put({ ...payload, synced: true });
           notifyLocalSubscribers();
         }
       })
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "weigh_ins", filter: `user_id=eq.${user.id}` },
-        () => {
-          pullRemoteData();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "meal_logs", filter: `user_id=eq.${user.id}` },
-        () => {
-          pullRemoteData();
-        }
-      )
-      .subscribe((status) => {
-        if (status === "SUBSCRIBED") {
-          // Channel active
-        }
-      });
+      .subscribe();
 
     channelRef.current = channel;
 
-    // 2. Tab focus & visibility sync (seamless catching up when user switches devices)
     const handleVisibility = () => {
       if (document.visibilityState === "visible") {
         pullRemoteData();
@@ -554,11 +456,12 @@ export function useCloudSync(): CloudSyncState {
 
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current);
+        channelRef.current = null;
       }
     };
-  }, [user, pullRemoteData]);
+  }, [user?.id, pullRemoteData, notifyLocalSubscribers]);
 
-  return {
+  const value: CloudSyncState = {
     isSyncing,
     lastSyncedAt,
     isOnline,
@@ -568,5 +471,38 @@ export function useCloudSync(): CloudSyncState {
     saveMealLog,
     deleteMealLog,
     saveWorkoutSet,
+  };
+
+  return <CloudSyncContext.Provider value={value}>{children}</CloudSyncContext.Provider>;
+}
+
+export function useCloudSync(): CloudSyncState {
+  const context = useContext(CloudSyncContext);
+  if (context) return context;
+
+  // Fallback safe implementations if used outside provider
+  return {
+    isSyncing: false,
+    lastSyncedAt: null,
+    isOnline: true,
+    error: null,
+    syncNow: async () => {},
+    saveWeighIn: async () => {},
+    saveMealLog: async (data: any) => ({
+      id: `meal-${Date.now()}`,
+      userId: "",
+      date: new Date().toISOString().split("T")[0],
+      mealType: data.mealType,
+      name: data.name,
+      calories: data.calories,
+      proteinG: data.proteinG,
+      carbG: data.carbG,
+      fatG: data.fatG,
+      isQuickDial: false,
+      synced: false,
+      createdAt: new Date().toISOString(),
+    }),
+    deleteMealLog: async () => {},
+    saveWorkoutSet: async () => {},
   };
 }

@@ -106,20 +106,22 @@ export default function SummaryPage() {
   }, [loadSummaryData]);
 
   // Macro Totals
-  const consumedCalories = todayMeals.reduce((acc, m) => acc + m.calories, 0);
-  const consumedProtein = todayMeals.reduce((acc, m) => acc + m.proteinG, 0);
-  const consumedCarbs = todayMeals.reduce((acc, m) => acc + m.carbG, 0);
-  const consumedFat = todayMeals.reduce((acc, m) => acc + m.fatG, 0);
+  const consumedCalories = todayMeals.reduce((acc, m) => acc + (Number(m.calories) || 0), 0);
+  const consumedProtein = todayMeals.reduce((acc, m) => acc + (Number(m.proteinG) || 0), 0);
+  const consumedCarbs = todayMeals.reduce((acc, m) => acc + (Number(m.carbG) || 0), 0);
+  const consumedFat = todayMeals.reduce((acc, m) => acc + (Number(m.fatG) || 0), 0);
 
-  const targetCalories = profile?.targetCalories || 2600;
-  const targetProtein = profile?.targetProteinG || 160;
-  const targetCarbs = profile?.targetCarbG || 315;
-  const targetFat = profile?.targetFatG || 74;
+  const targetCalories = Number(profile?.targetCalories || 2600);
+  const targetProtein = Number(profile?.targetProteinG || 160);
+  const targetCarbs = Number(profile?.targetCarbG || 315);
+  const targetFat = Number(profile?.targetFatG || 74);
 
-  const latestTrendPoint = trendData[trendData.length - 1] || {
+  const latestTrendPoint = trendData.length > 0 ? trendData[trendData.length - 1] : {
     rateOfGainLbsPerWeek: 0,
-    gainZone: "stagnant",
-    trendWeightLbs: profile?.currentWeightLbs || 0,
+    gainZone: "stagnant" as const,
+    trendWeightLbs: Number(profile?.currentWeightLbs || 175),
+    date: todayStr,
+    rawWeightLbs: Number(profile?.currentWeightLbs || 175),
   };
 
   const formattedEyebrowDate = new Date().toLocaleDateString("en-US", {

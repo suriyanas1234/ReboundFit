@@ -5,30 +5,38 @@ import Link from "next/link";
 import { Flame, ChevronRight, UtensilsCrossed, Wheat, Droplets } from "lucide-react";
 
 interface NutritionCardProps {
-  consumedCalories: number;
-  targetCalories: number;
-  consumedProtein: number;
-  targetProtein: number;
-  consumedCarbs: number;
-  consumedFat: number;
+  consumedCalories?: number;
+  targetCalories?: number;
+  consumedProtein?: number;
+  targetProtein?: number;
+  consumedCarbs?: number;
+  consumedFat?: number;
   targetCarbs?: number;
   targetFat?: number;
 }
 
 export function NutritionCard({
-  consumedCalories,
-  targetCalories,
-  consumedProtein,
-  targetProtein,
-  consumedCarbs,
-  consumedFat,
+  consumedCalories = 0,
+  targetCalories = 2600,
+  consumedProtein = 0,
+  targetProtein = 160,
+  consumedCarbs = 0,
+  consumedFat = 0,
   targetCarbs = 315,
   targetFat = 74,
 }: NutritionCardProps) {
-  const caloriePercent = Math.min(100, Math.round((consumedCalories / targetCalories) * 100));
-  const calorieRemainder = targetCalories - consumedCalories;
+  const safeCalories = Math.max(0, Number(consumedCalories || 0));
+  const safeTargetCalories = Math.max(1, Number(targetCalories || 2600));
+  const safeProtein = Math.max(0, Number(consumedProtein || 0));
+  const safeTargetProtein = Math.max(1, Number(targetProtein || 160));
+  const safeCarbs = Math.max(0, Number(consumedCarbs || 0));
+  const safeTargetCarbs = Math.max(1, Number(targetCarbs || 315));
+  const safeFat = Math.max(0, Number(consumedFat || 0));
+  const safeTargetFat = Math.max(1, Number(targetFat || 74));
 
-  const proteinPercent = Math.min(100, Math.round((consumedProtein / targetProtein) * 100));
+  const caloriePercent = Math.min(100, Math.round((safeCalories / safeTargetCalories) * 100));
+  const calorieRemainder = safeTargetCalories - safeCalories;
+  const proteinPercent = Math.min(100, Math.round((safeProtein / safeTargetProtein) * 100));
 
   return (
     <Link
@@ -58,10 +66,10 @@ export function NutritionCard({
       <div className="flex flex-wrap items-baseline justify-between gap-2 mt-2">
         <div className="flex items-baseline space-x-1.5 min-w-0">
           <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight font-sans truncate">
-            {consumedCalories.toLocaleString()}
+            {safeCalories.toLocaleString()}
           </span>
           <span className="text-sm sm:text-base font-semibold text-[#8E8E93] whitespace-nowrap">
-            / {targetCalories.toLocaleString()} kcal
+            / {safeTargetCalories.toLocaleString()} kcal
           </span>
         </div>
 
@@ -103,8 +111,8 @@ export function NutritionCard({
             <span className="text-[10px] font-bold uppercase tracking-wider truncate">Protein</span>
           </div>
           <div className="text-sm font-extrabold text-white font-mono truncate">
-            {consumedProtein}
-            <span className="text-[10px] font-normal text-[#8E8E93] ml-0.5">/{targetProtein}g</span>
+            {safeProtein}
+            <span className="text-[10px] font-normal text-[#8E8E93] ml-0.5">/{safeTargetProtein}g</span>
           </div>
           <div className="w-full h-1 bg-[#1C1C1E] rounded-full overflow-hidden mt-1.5">
             <div
@@ -121,13 +129,13 @@ export function NutritionCard({
             <span className="text-[10px] font-bold uppercase tracking-wider truncate">Carbs</span>
           </div>
           <div className="text-sm font-extrabold text-white font-mono truncate">
-            {consumedCarbs}
-            <span className="text-[10px] font-normal text-[#8E8E93] ml-0.5">/{targetCarbs}g</span>
+            {safeCarbs}
+            <span className="text-[10px] font-normal text-[#8E8E93] ml-0.5">/{safeTargetCarbs}g</span>
           </div>
           <div className="w-full h-1 bg-[#1C1C1E] rounded-full overflow-hidden mt-1.5">
             <div
               className="h-full bg-[#30D158] rounded-full"
-              style={{ width: `${Math.min(100, (consumedCarbs / targetCarbs) * 100)}%` }}
+              style={{ width: `${Math.min(100, (safeCarbs / safeTargetCarbs) * 100)}%` }}
             />
           </div>
         </div>
@@ -139,13 +147,13 @@ export function NutritionCard({
             <span className="text-[10px] font-bold uppercase tracking-wider truncate">Fats</span>
           </div>
           <div className="text-sm font-extrabold text-white font-mono truncate">
-            {consumedFat}
-            <span className="text-[10px] font-normal text-[#8E8E93] ml-0.5">/{targetFat}g</span>
+            {safeFat}
+            <span className="text-[10px] font-normal text-[#8E8E93] ml-0.5">/{safeTargetFat}g</span>
           </div>
           <div className="w-full h-1 bg-[#1C1C1E] rounded-full overflow-hidden mt-1.5">
             <div
               className="h-full bg-[#0A84FF] rounded-full"
-              style={{ width: `${Math.min(100, (consumedFat / targetFat) * 100)}%` }}
+              style={{ width: `${Math.min(100, (safeFat / safeTargetFat) * 100)}%` }}
             />
           </div>
         </div>
