@@ -38,7 +38,6 @@ export function QuickWeighInModal({
       const weightLbs = unit === "lbs" ? weight : Number((weight / 0.45359237).toFixed(1));
       const weightKg = unit === "kg" ? weight : Number((weight * 0.45359237).toFixed(1));
 
-      // 1. Fetch user's historical weigh-ins to update EMA
       const existing = await db.weighIns.where("userId").equals(user.id).toArray();
       const updatedList = [
         ...existing.filter((w) => w.date !== today),
@@ -53,13 +52,11 @@ export function QuickWeighInModal({
         },
       ];
 
-      // 2. Recalculate trend with new entry
       const smoothed = calculateWeightTrend(
         updatedList.map((w) => ({ date: w.date, rawWeightLbs: w.rawWeightLbs }))
       );
       const latestSmoothed = smoothed.find((s) => s.date === today);
 
-      // 3. Save to local IndexedDB
       await db.weighIns.put({
         id: `weigh-${user.id}-${today}`,
         userId: user.id,
@@ -72,7 +69,6 @@ export function QuickWeighInModal({
         createdAt: new Date().toISOString(),
       });
 
-      // 4. Update profile current weight
       const profile = await db.profiles.where("userId").equals(user.id).first();
       if (profile) {
         await db.profiles.update(profile.id, {
@@ -91,31 +87,33 @@ export function QuickWeighInModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-sm rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl relative">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
+      <div className="w-full max-w-sm rounded-t-[28px] sm:rounded-3xl bg-[#1C1C1E] border border-[#38383A] p-6 shadow-2xl relative pb-safe animate-slide-up">
+        <div className="sm:hidden w-10 h-1 bg-[#38383A] rounded-full mx-auto -mt-2 mb-3" />
+
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-1 rounded-full text-gray-400 hover:text-white hover:bg-surface-elevated"
+          className="absolute top-5 right-5 w-8 h-8 rounded-full bg-[#2C2C2E] text-[#8E8E93] hover:text-white flex items-center justify-center"
         >
-          <X className="w-5 h-5" />
+          <X className="w-4 h-4" />
         </button>
 
-        <div className="flex items-center space-x-3 mb-6">
-          <div className="p-2.5 rounded-2xl bg-brand-cyan/15 text-brand-cyan">
-            <Scale className="w-6 h-6" />
+        <div className="flex items-center space-x-3 mb-5">
+          <div className="w-10 h-10 rounded-2xl bg-[#AF52DE]/20 text-[#AF52DE] flex items-center justify-center">
+            <Scale className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-lg font-bold text-white">Morning Weigh-In</h3>
-            <p className="text-xs text-gray-400">Step on the scale, log in 3 seconds</p>
+            <h3 className="text-lg font-bold text-white tracking-tight">Morning Weigh-In</h3>
+            <p className="text-xs text-[#8E8E93]">Log scale weight to update HealthKit EMA</p>
           </div>
         </div>
 
         {/* Unit Selector */}
-        <div className="flex rounded-xl bg-surface-elevated p-1 mb-6 border border-surface-border">
+        <div className="flex rounded-xl bg-[#2C2C2E] p-1 mb-5 border border-[#38383A]">
           <button
             onClick={() => setUnit("lbs")}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              unit === "lbs" ? "bg-brand-cyan text-black font-bold" : "text-gray-400 hover:text-white"
+              unit === "lbs" ? "bg-[#AF52DE] text-white font-bold" : "text-[#8E8E93] hover:text-white"
             }`}
           >
             LBS (Pounds)
@@ -123,7 +121,7 @@ export function QuickWeighInModal({
           <button
             onClick={() => setUnit("kg")}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              unit === "kg" ? "bg-brand-cyan text-black font-bold" : "text-gray-400 hover:text-white"
+              unit === "kg" ? "bg-[#AF52DE] text-white font-bold" : "text-[#8E8E93] hover:text-white"
             }`}
           >
             KG (Kilograms)
@@ -131,10 +129,10 @@ export function QuickWeighInModal({
         </div>
 
         {/* Stepper Weight Dial */}
-        <div className="flex items-center justify-between my-4 px-2">
+        <div className="flex items-center justify-between my-3 px-2">
           <button
             onClick={() => handleAdjust(-0.5)}
-            className="w-12 h-12 rounded-2xl bg-surface-elevated border border-surface-border flex items-center justify-center text-white hover:border-brand-cyan/40 active:scale-95 transition-all text-lg font-bold"
+            className="w-11 h-11 rounded-2xl bg-[#2C2C2E] border border-[#38383A] flex items-center justify-center text-white hover:border-[#AF52DE] active:scale-95 transition-all text-lg font-bold"
           >
             <Minus className="w-5 h-5" />
           </button>
@@ -145,16 +143,16 @@ export function QuickWeighInModal({
               step="0.1"
               value={weight}
               onChange={(e) => setWeight(parseFloat(e.target.value) || 0)}
-              className="w-32 text-center text-4xl font-black bg-transparent font-mono text-white focus:outline-none"
+              className="w-32 text-center text-4xl font-extrabold bg-transparent font-sans text-white focus:outline-none"
             />
-            <div className="text-xs font-mono text-brand-cyan uppercase tracking-wider mt-1">
+            <div className="text-xs font-semibold text-[#AF52DE] uppercase tracking-wider mt-0.5">
               {unit}
             </div>
           </div>
 
           <button
             onClick={() => handleAdjust(0.5)}
-            className="w-12 h-12 rounded-2xl bg-surface-elevated border border-surface-border flex items-center justify-center text-white hover:border-brand-cyan/40 active:scale-95 transition-all text-lg font-bold"
+            className="w-11 h-11 rounded-2xl bg-[#2C2C2E] border border-[#38383A] flex items-center justify-center text-white hover:border-[#AF52DE] active:scale-95 transition-all text-lg font-bold"
           >
             <Plus className="w-5 h-5" />
           </button>
@@ -166,7 +164,7 @@ export function QuickWeighInModal({
             <button
               key={delta}
               onClick={() => handleAdjust(delta)}
-              className="py-1.5 rounded-xl bg-surface-elevated/80 border border-surface-border/50 text-xs font-mono text-gray-300 hover:text-white hover:border-brand-cyan/30 active:scale-95 transition-all"
+              className="py-1.5 rounded-xl bg-[#2C2C2E] border border-[#38383A] text-xs font-mono text-gray-300 hover:text-white hover:border-[#AF52DE]/50 active:scale-95 transition-all"
             >
               {delta > 0 ? `+${delta}` : delta}
             </button>
@@ -177,10 +175,10 @@ export function QuickWeighInModal({
         <button
           onClick={handleSave}
           disabled={isSubmitting}
-          className="w-full mt-4 py-3.5 rounded-2xl bg-gradient-to-r from-brand-cyan to-brand-emerald text-black font-extrabold text-sm flex items-center justify-center space-x-2 shadow-lg shadow-brand-cyan/20 hover:opacity-95 active:scale-95 transition-all"
+          className="w-full mt-2 py-3.5 rounded-2xl bg-[#AF52DE] text-white font-extrabold text-sm flex items-center justify-center space-x-2 shadow-lg shadow-[#AF52DE]/20 hover:opacity-95 active:scale-95 transition-all disabled:opacity-50"
         >
-          <Check className="w-5 h-5 stroke-[2.5]" />
-          <span>{isSubmitting ? "Saving..." : "Log Morning Weight"}</span>
+          <Check className="w-4 h-4 stroke-[3]" />
+          <span>{isSubmitting ? "Logging..." : "Log to HealthKit"}</span>
         </button>
       </div>
     </div>

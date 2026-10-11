@@ -2,338 +2,349 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { db, LocalProgressPhoto } from "@/lib/db";
+import { db, LocalProgressPhoto, LocalWeighIn } from "@/lib/db";
+import { calculateWeightTrend, SmoothedWeightPoint } from "@/algorithms/weightTrend";
+import { QuickWeighInModal } from "@/components/dashboard/QuickWeighInModal";
 import {
+  Scale,
   Camera,
   Layers,
   Sparkles,
-  RefreshCw,
+  ChevronRight,
+  Plus,
+  Sliders,
   Calendar,
-  Scale,
   Image as ImageIcon,
+  CheckCircle2,
+  TrendingUp,
+  X,
+  Upload,
 } from "lucide-react";
 
-export default function PhotoVaultPage() {
+export default function BodyMeasurementsPage() {
   const { user, profile } = useAuth();
+  const [weighIns, setWeighIns] = useState<LocalWeighIn[]>([]);
+  const [trendData, setTrendData] = useState<SmoothedWeightPoint[]>([]);
   const [photos, setPhotos] = useState<LocalProgressPhoto[]>([]);
+  const [isWeighInOpen, setIsWeighInOpen] = useState<boolean>(false);
+  const [sliderPosition, setSliderPosition] = useState<number>(50); // Ghost slider thumb
+  const [comparisonPose, setComparisonPose] = useState<LocalProgressPhoto["pose"]>("front_relaxed");
   const [isCameraActive, setIsCameraActive] = useState<boolean>(false);
-  const [ghostOpacity, setGhostOpacity] = useState<number>(30); // Default 30%
-  const [selectedPose, setSelectedPose] = useState<LocalProgressPhoto["pose"]>("front_relaxed");
-  const [sliderPosition, setSliderPosition] = useState<number>(50);
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const loadPhotos = async () => {
+  const todayStr = new Date().toISOString().split("T")[0];
+
+  const loadBodyData = async () => {
     if (!user) return;
-    const saved = await db.photos.where("userId").equals(user.id).toArray();
-    setPhotos(saved.sort((a, b) => a.date.localeCompare(b.date)));
+    try {
+      // 1. Fetch Weigh-Ins
+      const savedWeighIns = await db.weighIns.where("userId").equals(user.id).toArray();
+      setWeighIns(savedWeighIns.sort((a, b) => a.date.localeCompare(b.date)));
+
+      if (savedWeighIns.length > 0) {
+        const smoothed = calculateWeightTrend(
+          savedWeighIns.map((w) => ({ date: w.date, rawWeightLbs: w.rawWeightLbs }))
+        );
+        setTrendData(smoothed);
+      } else if (profile?.currentWeightLbs) {
+        const smoothed = calculateWeightTrend([
+          { date: todayStr, rawWeightLbs: profile.currentWeightLbs },
+        ]);
+        setTrendData(smoothed);
+      }
+
+      // 2. Fetch Progress Photos
+      const savedPhotos = await db.photos.where("userId").equals(user.id).toArray();
+      setPhotos(savedPhotos.sort((a, b) => a.date.localeCompare(b.date)));
+    } catch (err) {
+      console.error("Failed to load body measurements data:", err);
+    }
   };
 
   useEffect(() => {
-    loadPhotos();
-  }, [user]);
+    loadBodyData();
+  }, [user, profile]);
 
-  // Initialize HTML5 getUserMedia Camera
-  const startCamera = async () => {
-    setIsCameraActive(true);
-    try {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: "environment",
-            width: { ideal: 1080 },
-            height: { ideal: 1920 },
-          },
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play();
-        }
-      }
-    } catch (err) {
-      console.warn("Direct camera feed restricted, activating file picker fallback:", err);
-    }
+  const latestTrendPoint = trendData[trendData.length - 1] || {
+    trendWeightLbs: profile?.currentWeightLbs || 175.0,
+    rateOfGainLbsPerWeek: 0,
+    gainZone: "stagnant",
   };
 
-  const stopCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
-      videoRef.current.srcObject = null;
-    }
-    setIsCameraActive(false);
-  };
+  const baselinePhoto =
+    photos.find((p) => p.isBaseline && p.pose === comparisonPose) ||
+    photos.find((p) => p.isBaseline) ||
+    photos[0] ||
+    null;
 
-  // Capture Photo from Video Stream
-  const capturePhoto = async () => {
-    if (!videoRef.current || !canvasRef.current || !user) return;
+  const latestPhoto =
+    photos.filter((p) => p.pose === comparisonPose).slice(-1)[0] ||
+    photos.slice(-1)[0] ||
+    null;
 
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    canvas.width = video.videoWidth || 720;
-    canvas.height = video.videoHeight || 1280;
-
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
-
-      const isFirst = photos.length === 0;
-      const newPhoto: LocalProgressPhoto = {
-        id: `photo-${user.id}-${Date.now()}`,
-        userId: user.id,
-        date: new Date().toISOString().split("T")[0],
-        weekNumber: Math.max(1, Math.ceil(photos.length / 2) + 1),
-        pose: selectedPose,
-        weightLbs: profile?.currentWeightLbs || 0,
-        photoDataUrl: dataUrl,
-        isBaseline: isFirst,
-        synced: false,
-      };
-
-      await db.photos.put(newPhoto);
-      await loadPhotos();
-      stopCamera();
-    }
-  };
-
-  // Fallback file input change
-  const handleFileFallback = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!user) return;
+  // File Upload fallback for photos
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const dataUrl = event.target?.result as string;
+    if (!file || !user) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
         const isFirst = photos.length === 0;
         const newPhoto: LocalProgressPhoto = {
           id: `photo-${user.id}-${Date.now()}`,
           userId: user.id,
-          date: new Date().toISOString().split("T")[0],
+          date: todayStr,
           weekNumber: Math.max(1, Math.ceil(photos.length / 2) + 1),
-          pose: selectedPose,
-          weightLbs: profile?.currentWeightLbs || 0,
+          pose: comparisonPose,
+          weightLbs: latestTrendPoint.trendWeightLbs,
           photoDataUrl: dataUrl,
           isBaseline: isFirst,
           synced: false,
         };
         await db.photos.put(newPhoto);
-        await loadPhotos();
-      };
-      reader.readAsDataURL(file);
-    }
+        await loadBodyData();
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
-  // Reference baseline and latest photo for comparison slider
-  const baselinePhoto = photos.find((p) => p.isBaseline) || photos[0] || null;
-  const latestPhoto = photos.length > 1 ? photos[photos.length - 1] : null;
+  const formattedEyebrowDate = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).toUpperCase();
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Hidden canvas & fallback file input */}
-      <canvas ref={canvasRef} className="hidden" />
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={handleFileFallback}
-      />
+    <div className="space-y-6 animate-fade-in pb-16">
+      {/* =========================================================================
+          APPLE HEALTH LARGE TITLE HEADER
+          ========================================================================= */}
+      <header className="pt-2 pb-1">
+        <span className="text-xs font-semibold uppercase tracking-wider text-[#8E8E93] block">
+          {formattedEyebrowDate}
+        </span>
+        <div className="flex items-center justify-between mt-0.5">
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
+            Body Measurements
+          </h1>
+          <button
+            onClick={() => setIsWeighInOpen(true)}
+            className="w-9 h-9 rounded-full bg-[#AF52DE] text-white flex items-center justify-center font-bold shadow-lg shadow-[#AF52DE]/20 active:scale-95 transition-all"
+            title="Log Weigh-In"
+          >
+            <Plus className="w-5 h-5 stroke-[2.5]" />
+          </button>
+        </div>
+      </header>
 
-      {/* Header */}
-      <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <span className="text-xs font-mono uppercase tracking-wider text-brand-emerald">
-            Standardized Photo Vault
-          </span>
-          <h2 className="text-xl font-bold text-white">Ghost Silhouette Alignment</h2>
-          <p className="text-xs text-gray-400 mt-1">
-            Match silhouette, phone distance, and lighting for 1:1 side-by-side progression.
-          </p>
+      {/* =========================================================================
+          SECTION 1: WEIGHT TREND & RATE OF GAIN (HealthKit Purple Accent #AF52DE)
+          ========================================================================= */}
+      <div className="p-6 rounded-[24px] bg-[#1C1C1E] border border-[#2C2C2E]/60 shadow-xl space-y-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <div className="w-7 h-7 rounded-lg bg-[#AF52DE]/20 text-[#AF52DE] flex items-center justify-center">
+              <Scale className="w-4 h-4" />
+            </div>
+            <span className="text-xs font-semibold text-[#AF52DE] tracking-wide uppercase">
+              Weight Trend
+            </span>
+          </div>
+          <span className="text-xs font-mono text-[#8E8E93]">SMOOTHED (EMA)</span>
         </div>
 
-        {!isCameraActive ? (
+        {/* Central Weight Stat */}
+        <div className="flex items-baseline justify-between pt-1">
+          <div>
+            <span className="text-5xl font-black text-white tracking-tight font-sans">
+              {latestTrendPoint.trendWeightLbs.toFixed(1)}
+            </span>
+            <span className="text-lg font-semibold text-[#8E8E93] ml-2">lbs</span>
+          </div>
+
+          <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-[#AF52DE]/20 text-[#AF52DE] font-mono">
+            {latestTrendPoint.rateOfGainLbsPerWeek > 0 ? "+" : ""}
+            {latestTrendPoint.rateOfGainLbsPerWeek.toFixed(2)} lbs / week
+          </span>
+        </div>
+
+        {/* Apple Health Time-Series Bar / Trend Graph */}
+        <div className="space-y-1.5 pt-2">
+          <div className="flex items-center justify-between text-[11px] font-mono text-[#8E8E93]">
+            <span>Recent Weigh-Ins</span>
+            <span>Target Gain: +{profile?.targetGainRateLbsPerWeek || 0.5} lbs/wk</span>
+          </div>
+
+          <div className="h-28 rounded-2xl bg-[#2C2C2E]/50 p-3 flex items-end justify-between space-x-1.5">
+            {trendData.slice(-14).map((pt, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center h-full justify-end group relative">
+                <div
+                  className="w-full rounded-md bg-[#AF52DE]/40 hover:bg-[#AF52DE] transition-all cursor-pointer"
+                  style={{
+                    height: `${Math.max(16, Math.min(84, ((pt.trendWeightLbs % 10) + 1) * 7))}px`,
+                  }}
+                />
+                <div className="opacity-0 group-hover:opacity-100 absolute -top-7 bg-black border border-[#38383A] text-white text-[10px] font-mono px-1.5 py-0.5 rounded shadow pointer-events-none transition-opacity">
+                  {pt.trendWeightLbs.toFixed(1)}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between text-xs text-[#8E8E93] pt-2 border-t border-[#2C2C2E]">
+          <span>
+            {weighIns.length} total entries recorded
+          </span>
           <button
-            onClick={startCamera}
-            className="flex items-center justify-center space-x-2 px-5 py-3 rounded-2xl bg-gradient-to-r from-brand-emerald to-brand-cyan text-black font-extrabold text-sm shadow-lg shadow-brand-emerald/20 active:scale-95 transition-all"
+            onClick={() => setIsWeighInOpen(true)}
+            className="text-xs font-semibold text-[#0A84FF] hover:underline"
           >
-            <Camera className="w-5 h-5 stroke-[2.5]" />
-            <span>Open Viewfinder</span>
+            + Add Weigh-In
           </button>
-        ) : (
-          <button
-            onClick={stopCamera}
-            className="px-4 py-2 rounded-xl bg-surface-elevated text-xs font-semibold text-gray-400 hover:text-white"
-          >
-            Close Camera
-          </button>
-        )}
+        </div>
       </div>
 
       {/* =========================================================================
-          VIEWFINDER WITH GHOST OVERLAY
+          SECTION 2: PHYSIQUE COMPARISON & GHOST SLIDER
           ========================================================================= */}
-      {isCameraActive && (
-        <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl relative overflow-hidden space-y-4">
-          <div className="relative aspect-[3/4] max-w-sm mx-auto rounded-2xl overflow-hidden bg-black border border-surface-border flex items-center justify-center">
-            {/* Live Camera Feed */}
-            <video
-              ref={videoRef}
-              playsInline
-              autoPlay
-              muted
-              className="absolute inset-0 w-full h-full object-cover"
-            />
-
-            {/* Ghost Silhouette Overlay */}
-            <div
-              className="absolute inset-0 pointer-events-none flex items-center justify-center transition-opacity"
-              style={{ opacity: ghostOpacity / 100 }}
-            >
-              {baselinePhoto ? (
-                <img
-                  src={baselinePhoto.photoDataUrl}
-                  alt="Baseline Ghost"
-                  className="w-full h-full object-cover filter contrast-125 brightness-110"
-                />
-              ) : (
-                <svg
-                  viewBox="0 0 200 300"
-                  className="w-4/5 h-4/5 text-brand-cyan/80 stroke-current fill-none stroke-[2]"
-                >
-                  <circle cx="100" cy="50" r="22" strokeDasharray="4 4" />
-                  <path d="M 60 90 L 140 90 L 125 180 L 75 180 Z" strokeDasharray="4 4" />
-                  <line x1="100" y1="180" x2="85" y2="280" strokeDasharray="4 4" />
-                  <line x1="100" y1="180" x2="115" y2="280" strokeDasharray="4 4" />
-                  <line x1="60" y1="90" x2="45" y2="170" strokeDasharray="4 4" />
-                  <line x1="140" y1="90" x2="155" y2="170" strokeDasharray="4 4" />
-                </svg>
-              )}
-            </div>
-
-            {/* HUD Status */}
-            <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4">
-              <div className="flex justify-between text-[10px] font-mono text-brand-cyan bg-black/40 px-2 py-1 rounded backdrop-blur-sm self-center">
-                <span>GHOST ALIGNMENT: {ghostOpacity}% OPACITY</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Opacity Slider Control */}
-          <div className="max-w-sm mx-auto space-y-2">
-            <div className="flex justify-between text-xs text-gray-400 font-mono">
-              <span className="flex items-center space-x-1">
-                <Layers className="w-3.5 h-3.5 text-brand-cyan" />
-                <span>Ghost Opacity</span>
-              </span>
-              <span>{ghostOpacity}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={ghostOpacity}
-              onChange={(e) => setGhostOpacity(parseInt(e.target.value))}
-              className="w-full accent-brand-cyan"
-            />
-          </div>
-
-          {/* Shutter Button & Fallback Trigger */}
-          <div className="flex items-center justify-center space-x-4 pt-2">
-            <button
-              onClick={capturePhoto}
-              className="w-16 h-16 rounded-full bg-white border-4 border-brand-cyan shadow-xl shadow-brand-cyan/40 flex items-center justify-center active:scale-90 transition-transform"
-            >
-              <div className="w-10 h-10 rounded-full bg-brand-cyan" />
-            </button>
-
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className="p-3 rounded-2xl bg-surface-elevated border border-surface-border text-gray-400 hover:text-white"
-              title="Upload photo directly"
-            >
-              <RefreshCw className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* =========================================================================
-          SIDE-BY-SIDE PROGRESSION SLIDER (CLEAN EMPTY STATE)
-          ========================================================================= */}
-      <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl space-y-4">
+      <div className="p-6 rounded-[24px] bg-[#1C1C1E] border border-[#2C2C2E]/60 shadow-xl space-y-4">
         <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-lg font-bold text-white">Side-by-Side Comparison</h3>
-            <p className="text-xs text-gray-400">
-              Interactive split slider comparing Baseline vs Latest Check-in
-            </p>
+          <div className="flex items-center space-x-2">
+            <div className="w-7 h-7 rounded-lg bg-[#0A84FF]/20 text-[#0A84FF] flex items-center justify-center">
+              <Camera className="w-4 h-4" />
+            </div>
+            <span className="text-xs font-semibold text-[#0A84FF] tracking-wide uppercase">
+              Physique Split Comparison
+            </span>
           </div>
+
+          <label className="cursor-pointer text-xs font-semibold text-[#0A84FF] hover:underline flex items-center space-x-1">
+            <Upload className="w-3.5 h-3.5" />
+            <span>Upload Photo</span>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileUpload}
+              className="sr-only"
+            />
+          </label>
         </div>
 
+        {/* Pose Filter Selector */}
+        <div className="flex items-center space-x-1.5 overflow-x-auto pb-1 no-scrollbar">
+          {[
+            { id: "front_relaxed", label: "Front Relaxed" },
+            { id: "front_flexed", label: "Front Flexed" },
+            { id: "side_left", label: "Side Profile" },
+            { id: "back_lat_spread", label: "Back Spread" },
+          ].map((pose) => (
+            <button
+              key={pose.id}
+              onClick={() => setComparisonPose(pose.id as any)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                comparisonPose === pose.id
+                  ? "bg-[#2C2C2E] text-white border border-[#38383A]"
+                  : "text-[#8E8E93] hover:text-white"
+              }`}
+            >
+              {pose.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Interactive Comparison Window */}
         {baselinePhoto && latestPhoto ? (
-          <div className="relative aspect-[4/3] sm:aspect-[16/9] w-full rounded-2xl overflow-hidden bg-black border border-surface-border select-none">
-            {/* Baseline Image */}
-            <div className="absolute inset-0 flex items-center justify-center bg-black">
+          <div className="space-y-3">
+            <div className="relative aspect-[3/4] max-h-[420px] rounded-2xl overflow-hidden bg-black border border-[#2C2C2E] select-none">
+              {/* Baseline Photo (Left side / Underlay) */}
               <img
                 src={baselinePhoto.photoDataUrl}
-                alt="Baseline"
-                className="w-full h-full object-contain"
+                alt="Baseline Physique"
+                className="absolute inset-0 w-full h-full object-cover"
               />
-              <div className="absolute bottom-3 left-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-xl text-xs font-mono text-white">
-                Baseline ({baselinePhoto.date}) • {baselinePhoto.weightLbs} lbs
+
+              {/* Latest Photo (Right side clipped by Slider Position) */}
+              <div
+                className="absolute inset-0 overflow-hidden"
+                style={{ clipPath: `inset(0 0 0 ${sliderPosition}%)` }}
+              >
+                <img
+                  src={latestPhoto.photoDataUrl}
+                  alt="Current Physique"
+                  className="absolute inset-0 w-full h-full object-cover"
+                />
+              </div>
+
+              {/* Translucent Divider Line with Thumb */}
+              <div
+                className="absolute top-0 bottom-0 w-0.5 bg-white shadow-2xl z-20 pointer-events-none"
+                style={{ left: `${sliderPosition}%` }}
+              >
+                <div className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-8 h-8 rounded-full bg-white text-black flex items-center justify-center shadow-2xl font-black text-xs">
+                  ⇔
+                </div>
+              </div>
+
+              {/* Labels */}
+              <div className="absolute top-3 left-3 z-10 px-2 py-1 rounded-md bg-black/60 backdrop-blur-md text-[10px] font-mono text-white">
+                Baseline (Day 1)
+              </div>
+              <div className="absolute top-3 right-3 z-10 px-2 py-1 rounded-md bg-black/60 backdrop-blur-md text-[10px] font-mono text-white">
+                Latest Check-in
               </div>
             </div>
 
-            {/* Latest Progress Image (Clipped) */}
-            <div
-              className="absolute inset-0 bg-black border-r-2 border-brand-cyan"
-              style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
-            >
-              <img
-                src={latestPhoto.photoDataUrl}
-                alt="Latest"
-                className="w-full h-full object-contain"
+            {/* Native iOS Slider Thumb Control */}
+            <div className="space-y-1 pt-1">
+              <div className="flex items-center justify-between text-[11px] font-mono text-[#8E8E93]">
+                <span>Drag to Compare Overload Progression:</span>
+                <span>{sliderPosition}% Current</span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={sliderPosition}
+                onChange={(e) => setSliderPosition(Number(e.target.value))}
+                className="w-full accent-[#0A84FF] cursor-pointer"
               />
-              <div className="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md px-3 py-1 rounded-xl text-xs font-mono text-brand-cyan">
-                Latest ({latestPhoto.date}) • {latestPhoto.weightLbs} lbs
-              </div>
             </div>
-
-            {/* Draggable Divider Line */}
-            <div
-              className="absolute top-0 bottom-0 w-0.5 bg-brand-cyan cursor-ew-resize flex items-center justify-center"
-              style={{ left: `${sliderPosition}%` }}
-            >
-              <div className="w-7 h-7 rounded-full bg-brand-cyan text-black flex items-center justify-center shadow-lg -translate-x-1/2 text-xs font-black">
-                ↔
-              </div>
-            </div>
-
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={sliderPosition}
-              onChange={(e) => setSliderPosition(parseInt(e.target.value))}
-              className="absolute inset-0 opacity-0 cursor-ew-resize w-full h-full"
-            />
           </div>
         ) : (
-          <div className="p-8 rounded-2xl bg-surface-elevated/40 border border-dashed border-surface-border text-center space-y-2">
-            <ImageIcon className="w-8 h-8 text-gray-500 mx-auto mb-1" />
-            <h4 className="text-sm font-bold text-white">Comparison Unlocked at 2 Photos</h4>
-            <p className="text-xs text-gray-400 max-w-sm mx-auto">
-              {baselinePhoto
-                ? "1 baseline photo saved. Take your next weekly check-in photo using the viewfinder above to unlock the side-by-side comparison slider."
-                : "No progress photos saved yet. Open the viewfinder above to capture your starting Day 1 physique photo."}
-            </p>
+          <div className="aspect-[3/4] max-h-[300px] rounded-2xl bg-[#2C2C2E]/40 border border-[#2C2C2E] flex flex-col items-center justify-center text-center p-6 space-y-3">
+            <div className="w-12 h-12 rounded-full bg-[#1C1C1E] border border-[#38383A] flex items-center justify-center text-[#8E8E93]">
+              <ImageIcon className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="text-sm font-bold text-white">No Physique Photos Yet</div>
+              <p className="text-xs text-[#8E8E93] max-w-xs mt-1">
+                Upload your Day 1 baseline check-in photo to unlock the split-screen comparison slider.
+              </p>
+            </div>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="px-4 py-2 rounded-xl bg-[#0A84FF] text-white text-xs font-bold active:scale-95 transition-all shadow-md"
+            >
+              Upload Baseline Check-in
+            </button>
           </div>
         )}
       </div>
+
+      {/* Quick Weigh-In Modal */}
+      <QuickWeighInModal
+        isOpen={isWeighInOpen}
+        onClose={() => setIsWeighInOpen(false)}
+        lastWeightLbs={latestTrendPoint.trendWeightLbs}
+        onWeightLogged={loadBodyData}
+      />
     </div>
   );
 }

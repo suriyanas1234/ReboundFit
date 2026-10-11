@@ -3,19 +3,23 @@
 @tailwind utilities;
 
 :root {
-  --background: #090A0F;
-  --surface: #12141C;
-  --surface-elevated: #1A1D27;
+  --background: #000000;
+  --surface: #1C1C1E;
+  --surface-elevated: #2C2C2E;
+  --separator: #38383A;
 }
 
-/* Standalone iOS PWA styling optimizations */
+/* Standalone iOS Apple Health PWA styling */
 html, body {
-  background-color: #090A0F;
+  background-color: #000000;
   color: #FFFFFF;
-  overscroll-behavior-y: none; /* Disables rubber-banding in standalone PWA */
+  overscroll-behavior-y: none;
   -webkit-tap-highlight-color: transparent;
   user-select: none;
   -webkit-user-select: none;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 input, textarea {
@@ -23,7 +27,7 @@ input, textarea {
   -webkit-user-select: text;
 }
 
-/* Safe area support for iPhone Dynamic Island and Home Bar */
+/* Safe area support for iPhone Dynamic Island and Home Indicator Bar */
 .pb-safe {
   padding-bottom: max(env(safe-area-inset-bottom, 16px), 16px);
 }
@@ -32,21 +36,33 @@ input, textarea {
   padding-top: max(env(safe-area-inset-top, 16px), 16px);
 }
 
+/* Apple iOS-style grouped card utility */
+.apple-card {
+  background-color: #1C1C1E;
+  border-radius: 20px;
+  border: 1px solid rgba(56, 56, 58, 0.4);
+}
+
+.apple-card-elevated {
+  background-color: #2C2C2E;
+  border-radius: 16px;
+}
+
 /* Custom scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #12141C;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #262A38;
+  background: #38383A;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3A4056;
+  background: #48484A;
 }

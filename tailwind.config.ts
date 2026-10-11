@@ -10,21 +10,51 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "#090A0F",
-        surface: "#12141C",
-        "surface-elevated": "#1A1D27",
-        "surface-border": "#262A38",
+        background: "#000000",
+        surface: "#1C1C1E",
+        "surface-elevated": "#2C2C2E",
+        "surface-border": "#38383A",
+        // Apple Health Native Palette
+        apple: {
+          bg: "#000000",
+          card: "#1C1C1E",
+          cardHover: "#2C2C2E",
+          separator: "#38383A",
+          gray: "#8E8E93",
+          darkGray: "#636366",
+          orange: "#FF9500", // Nutrition / Calories
+          pink: "#FF2D55",   // Protein / Activity
+          purple: "#AF52DE", // Weight / Measurements
+          blue: "#0A84FF",   // Workouts / Hypertrophy
+          green: "#30D158",  // Completion / PRs
+          teal: "#64D2FF",
+          yellow: "#FFD60A",
+        },
         brand: {
-          cyan: "#00F0FF",
-          emerald: "#10B981",
-          amber: "#F59E0B",
-          rose: "#F43F5E",
-          purple: "#8B5CF6",
+          cyan: "#0A84FF",
+          emerald: "#30D158",
+          amber: "#FF9500",
+          rose: "#FF2D55",
+          purple: "#AF52DE",
         },
       },
       fontFamily: {
-        sans: ["var(--font-geist-sans)", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "Roboto", "sans-serif"],
-        mono: ["var(--font-geist-mono)", "monospace"],
+        sans: [
+          "-apple-system",
+          "BlinkMacSystemFont",
+          "SF Pro Display",
+          "SF Pro Text",
+          "Helvetica Neue",
+          "system-ui",
+          "sans-serif",
+        ],
+        mono: [
+          "SF Mono",
+          "ui-monospace",
+          "Menlo",
+          "Monaco",
+          "monospace",
+        ],
       },
       spacing: {
         safe: "env(safe-area-inset-bottom, 20px)",
@@ -32,6 +62,9 @@ const config: Config = {
       padding: {
         safe: "env(safe-area-inset-bottom, 20px)",
         "safe-top": "env(safe-area-inset-top, 20px)",
+      },
+      borderRadius: {
+        "apple-card": "20px",
       },
     },
   },

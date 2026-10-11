@@ -12,7 +12,6 @@ import {
   Pause,
   RotateCcw,
   Plus,
-  Sparkles,
   Calendar,
   ChevronLeft,
   ChevronRight,
@@ -20,6 +19,7 @@ import {
   Coffee,
   X,
   Layers,
+  ChevronDown,
 } from "lucide-react";
 import { WorkoutScheduleView } from "@/components/schedule/WorkoutScheduleView";
 import {
@@ -48,9 +48,9 @@ interface ActiveExerciseState {
   sets: ActiveSetState[];
 }
 
-export default function LiftTrackerPage() {
+export default function WorkoutsPage() {
   const { user, profile } = useAuth();
-  const [activeTab, setActiveTab] = useState<"schedule" | "session">("schedule");
+  const [activeTab, setActiveTab] = useState<"session" | "schedule">("session");
   const [exercises, setExercises] = useState<LocalExercise[]>([]);
   const [routineName, setRoutineName] = useState<string>("Workout Session");
   const [activeExercises, setActiveExercises] = useState<ActiveExerciseState[]>([]);
@@ -68,23 +68,18 @@ export default function LiftTrackerPage() {
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Check URL query param ?view=session or ?view=schedule and optional ?date=YYYY-MM-DD
+  // Check URL query param ?view=session or ?view=schedule
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
       const view = params.get("view");
       const dateParam = params.get("date");
-      if (dateParam) {
-        setSelectedDate(dateParam);
-      }
-      if (view === "session") setActiveTab("session");
-      else if (view === "schedule") setActiveTab("schedule");
+      if (dateParam) setSelectedDate(dateParam);
+      if (view === "schedule") setActiveTab("schedule");
+      else if (view === "session") setActiveTab("session");
     }
   }, []);
 
-  /**
-   * Loads the scheduled workout and exercises for the selected date.
-   */
   const loadWorkoutForDate = async (
     targetDate: string,
     explicitScheduled?: LocalScheduledWorkout
@@ -117,19 +112,16 @@ export default function LiftTrackerPage() {
         return;
       }
 
-      // Map exercises from database matching the scheduled IDs
       const selected = targetScheduled.exerciseIds
         .map((id) => allExercises.find((e) => e.id === id))
         .filter(Boolean) as LocalExercise[];
 
-      // Fetch real user history for previous benchmarks (zero fake numbers)
       const previousSets = await db.workoutSets
         .where("userId")
         .equals(user.id)
         .toArray();
 
       const workoutSessionExercises: ActiveExerciseState[] = selected.map((ex) => {
-        // Find user's best set from prior workouts
         const priorSetsForEx = previousSets
           .filter((s) => s.exerciseId === ex.id && !s.isWarmup)
           .sort((a, b) => b.weightLbs - a.weightLbs);
@@ -170,10 +162,7 @@ export default function LiftTrackerPage() {
     }
   }, [user, profile, selectedDate]);
 
-  // Navigate Date Handler
-  const handleSelectDate = (dateStr: string) => {
-    setSelectedDate(dateStr);
-  };
+  const handleSelectDate = (dateStr: string) => setSelectedDate(dateStr);
 
   const handlePrevDay = () => {
     const d = new Date(selectedDate + "T12:00:00");
@@ -187,11 +176,8 @@ export default function LiftTrackerPage() {
     setSelectedDate(d.toISOString().split("T")[0]);
   };
 
-  const handleJumpToToday = () => {
-    setSelectedDate(todayStr);
-  };
+  const handleJumpToToday = () => setSelectedDate(todayStr);
 
-  // Switch routine for the active day
   const handleSwitchRoutine = async (template: RoutineTemplate) => {
     if (!user || !scheduledDay) return;
     const updated: LocalScheduledWorkout = {
@@ -208,7 +194,6 @@ export default function LiftTrackerPage() {
     await loadWorkoutForDate(selectedDate, updated);
   };
 
-  // Toggle manual completion of current day's workout
   const handleToggleManualComplete = async () => {
     if (!scheduledDay) return;
     const updated: LocalScheduledWorkout = {
@@ -220,7 +205,6 @@ export default function LiftTrackerPage() {
     setScheduledDay(updated);
   };
 
-  // Add individual exercise to today's workout
   const handleAddExerciseToWorkout = async (exercise: LocalExercise) => {
     if (!user || !scheduledDay) return;
     if (scheduledDay.exerciseIds.includes(exercise.id)) return;
@@ -237,7 +221,6 @@ export default function LiftTrackerPage() {
     setIsAddExerciseModalOpen(false);
   };
 
-  // Start Scheduled Workout from Schedule tab
   const handleStartScheduledWorkout = async (scheduled: LocalScheduledWorkout) => {
     setSelectedDate(scheduled.date);
     await loadWorkoutForDate(scheduled.date, scheduled);
@@ -247,7 +230,7 @@ export default function LiftTrackerPage() {
     }
   };
 
-  // Timer Tick Effect
+  // Timer Tick
   useEffect(() => {
     if (isTimerRunning && restSecondsRemaining > 0) {
       timerIntervalRef.current = setInterval(() => {
@@ -269,7 +252,6 @@ export default function LiftTrackerPage() {
     };
   }, [isTimerRunning, restSecondsRemaining]);
 
-  // Audio & Haptic alert
   const triggerTimerChimeAndHaptic = () => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -292,7 +274,6 @@ export default function LiftTrackerPage() {
     }
   };
 
-  // Toggle Set Complete & Check for PR
   const handleToggleSet = async (exIndex: number, setIndex: number) => {
     if (!user) return;
     const nextExercises = [...activeExercises];
@@ -302,7 +283,6 @@ export default function LiftTrackerPage() {
     targetSet.completed = !wasCompleted;
 
     if (!wasCompleted) {
-      // Check PR condition if prior benchmarks exist
       if (targetSet.prevWeightLbs !== null && targetSet.prevReps !== null) {
         const isWeightPr = targetSet.weightLbs > targetSet.prevWeightLbs;
         const isRepPr =
@@ -311,18 +291,17 @@ export default function LiftTrackerPage() {
         if (isWeightPr || isRepPr) {
           targetSet.isPr = true;
           const prMsg = isWeightPr
-            ? `🔥 NEW WEIGHT PR! +${targetSet.weightLbs - targetSet.prevWeightLbs} lbs on ${
+            ? `🔥 New Weight PR! +${targetSet.weightLbs - targetSet.prevWeightLbs} lbs on ${
                 nextExercises[exIndex].exercise.name
               }`
-            : `⚡ NEW REP PR! +${targetSet.reps - targetSet.prevReps} reps on ${
+            : `⚡ New Rep PR! +${targetSet.reps - targetSet.prevReps} reps on ${
                 nextExercises[exIndex].exercise.name
               }`;
           setPrCelebration(prMsg);
-          setTimeout(() => setPrCelebration(null), 4000);
+          setTimeout(() => setPrCelebration(null), 3500);
         }
       }
 
-      // Save real set to Dexie
       const workoutSetRecord: LocalWorkoutSet = {
         id: `set-${user.id}-${Date.now()}-${targetSet.setNumber}`,
         userId: user.id,
@@ -337,7 +316,6 @@ export default function LiftTrackerPage() {
       };
       await db.workoutSets.put(workoutSetRecord);
 
-      // Auto-mark scheduled workout for this date as completed
       try {
         if (scheduledDay && !scheduledDay.isCompleted) {
           const updated: LocalScheduledWorkout = {
@@ -349,10 +327,9 @@ export default function LiftTrackerPage() {
           setScheduledDay(updated);
         }
       } catch (err) {
-        console.warn("Could not mark workout completed in Dexie:", err);
+        console.warn("Could not mark workout completed:", err);
       }
 
-      // Auto-start rest timer
       setRestSecondsRemaining(nextExercises[exIndex].restSeconds);
       setIsTimerRunning(true);
     }
@@ -381,55 +358,65 @@ export default function LiftTrackerPage() {
   const formatFullDate = (dateStr: string) => {
     const d = new Date(dateStr + "T12:00:00");
     return d.toLocaleDateString("en-US", {
-      weekday: "long",
+      weekday: "short",
       month: "short",
       day: "numeric",
-      year: "numeric",
     });
   };
 
-  const formatShortDate = (dateStr: string) => {
-    const d = new Date(dateStr + "T12:00:00");
-    return d.toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-  };
+  const formattedEyebrowDate = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).toUpperCase();
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6 pb-12">
+    <div className="space-y-6 animate-fade-in pb-16">
       {/* =========================================================================
-          TOP TAB BAR: WORKOUT SCHEDULE (CALENDAR) VS ACTIVE SESSION LOGGER
+          APPLE HEALTH LARGE TITLE HEADER
           ========================================================================= */}
-      <div className="flex items-center space-x-2 p-1.5 rounded-2xl bg-surface border border-surface-border">
+      <header className="pt-2 pb-1">
+        <span className="text-xs font-semibold uppercase tracking-wider text-[#8E8E93] block">
+          {formattedEyebrowDate}
+        </span>
+        <div className="flex items-center justify-between mt-0.5">
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white">
+            Workouts
+          </h1>
+
+          {/* Quick Date Indicator */}
+          <span className="text-xs font-semibold text-[#0A84FF] font-mono">
+            {selectedDate === todayStr ? "TODAY" : formatFullDate(selectedDate)}
+          </span>
+        </div>
+      </header>
+
+      {/* =========================================================================
+          APPLE NATIVE SEGMENTED CONTROL PILL
+          ========================================================================= */}
+      <div className="p-1 rounded-xl bg-[#1C1C1E] border border-[#2C2C2E] flex items-center">
         <button
-          onClick={() => setActiveTab("schedule")}
-          className={`flex-1 flex items-center justify-center space-x-2 py-3 rounded-xl text-xs font-bold transition-all ${
-            activeTab === "schedule"
-              ? "bg-brand-cyan/20 text-brand-cyan border border-brand-cyan/40 shadow-md shadow-brand-cyan/10"
-              : "text-gray-400 hover:text-white"
+          onClick={() => setActiveTab("session")}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center space-x-1.5 ${
+            activeTab === "session"
+              ? "bg-[#2C2C2E] text-white shadow-sm"
+              : "text-[#8E8E93] hover:text-white"
           }`}
         >
-          <Calendar className="w-4 h-4" />
-          <span>Workout Schedule & Google Calendar</span>
+          <Dumbbell className="w-3.5 h-3.5 text-[#0A84FF]" />
+          <span>Active Session</span>
         </button>
 
         <button
-          onClick={() => {
-            if (!selectedDate) setSelectedDate(todayStr);
-            setActiveTab("session");
-          }}
-          className={`flex-1 flex items-center justify-center space-x-2 py-3 rounded-xl text-xs font-bold transition-all ${
-            activeTab === "session"
-              ? "bg-brand-cyan/20 text-brand-cyan border border-brand-cyan/40 shadow-md shadow-brand-cyan/10"
-              : "text-gray-400 hover:text-white"
+          onClick={() => setActiveTab("schedule")}
+          className={`flex-1 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center justify-center space-x-1.5 ${
+            activeTab === "schedule"
+              ? "bg-[#2C2C2E] text-white shadow-sm"
+              : "text-[#8E8E93] hover:text-white"
           }`}
         >
-          <Dumbbell className="w-4 h-4" />
-          <span>
-            Active Overload Session ({selectedDate === todayStr ? "Today" : formatShortDate(selectedDate)} •{" "}
-            {routineName.split("(")[0].trim()})
-          </span>
+          <Calendar className="w-3.5 h-3.5 text-[#30D158]" />
+          <span>Schedule & Calendar</span>
         </button>
       </div>
 
@@ -437,130 +424,98 @@ export default function LiftTrackerPage() {
         <WorkoutScheduleView onStartScheduledWorkout={handleStartScheduledWorkout} />
       ) : (
         <>
-          {/* PR Celebration Alert Banner */}
+          {/* PR Celebration Floating Banner */}
           {prCelebration && (
-            <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-brand-cyan to-brand-emerald text-black px-6 py-3 rounded-2xl shadow-2xl font-black text-sm flex items-center space-x-2 animate-bounce">
+            <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-[#30D158] text-black px-6 py-3 rounded-2xl shadow-2xl font-black text-sm flex items-center space-x-2 animate-bounce">
               <Trophy className="w-5 h-5" />
               <span>{prCelebration}</span>
             </div>
           )}
 
           {/* =========================================================================
-              ACTIVE SESSION DATE SELECTOR & STATUS BAR
+              DATE NAVIGATION BAR (Apple Health Style)
               ========================================================================= */}
-          <div className="rounded-3xl bg-surface border border-surface-border p-4 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="flex items-center space-x-2 flex-wrap sm:flex-nowrap">
-              {/* Prev Day */}
+          <div className="flex items-center justify-between p-3 rounded-2xl bg-[#1C1C1E] border border-[#2C2C2E]/60">
+            <div className="flex items-center space-x-1.5">
               <button
                 onClick={handlePrevDay}
-                className="p-2.5 rounded-xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border text-gray-300 hover:text-white transition-colors"
+                className="p-2 rounded-xl bg-[#2C2C2E] text-[#8E8E93] hover:text-white transition-colors"
                 title="Previous Day"
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
 
-              {/* Date Badge / Date Picker */}
-              <div className="relative flex items-center">
-                <label className="flex items-center space-x-2.5 px-4 py-2.5 rounded-xl bg-surface-elevated border border-surface-border cursor-pointer hover:border-brand-cyan/40 transition-colors">
-                  <Calendar className="w-4 h-4 text-brand-cyan" />
-                  <span className="text-sm font-bold text-white font-mono">
-                    {formatFullDate(selectedDate)}
-                  </span>
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) => e.target.value && handleSelectDate(e.target.value)}
-                    className="sr-only"
-                  />
-                </label>
-              </div>
+              <label className="flex items-center space-x-2 px-3 py-1.5 rounded-xl bg-[#2C2C2E] cursor-pointer hover:border-[#0A84FF] transition-colors">
+                <Calendar className="w-3.5 h-3.5 text-[#0A84FF]" />
+                <span className="text-xs font-bold text-white font-mono">
+                  {formatFullDate(selectedDate)}
+                </span>
+                <input
+                  type="date"
+                  value={selectedDate}
+                  onChange={(e) => e.target.value && handleSelectDate(e.target.value)}
+                  className="sr-only"
+                />
+              </label>
 
               {selectedDate === todayStr ? (
-                <span className="px-2.5 py-1.5 rounded-lg bg-brand-cyan/20 border border-brand-cyan/40 text-brand-cyan text-[11px] font-mono font-black uppercase">
-                  Today
+                <span className="px-2 py-0.5 rounded-md bg-[#0A84FF]/20 text-[#0A84FF] text-[10px] font-bold font-mono">
+                  TODAY
                 </span>
               ) : (
                 <button
                   onClick={handleJumpToToday}
-                  className="px-3 py-1.5 rounded-lg bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border text-gray-300 hover:text-white text-xs font-mono transition-colors"
+                  className="px-2 py-1 rounded-md bg-[#2C2C2E] text-[11px] font-medium text-gray-300 hover:text-white transition-colors"
                 >
-                  Jump to Today
+                  Today
                 </button>
               )}
 
-              {/* Next Day */}
               <button
                 onClick={handleNextDay}
-                className="p-2.5 rounded-xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border text-gray-300 hover:text-white transition-colors"
+                className="p-2 rounded-xl bg-[#2C2C2E] text-[#8E8E93] hover:text-white transition-colors"
                 title="Next Day"
               >
                 <ChevronRight className="w-4 h-4" />
               </button>
             </div>
 
-            {/* Right: Routine Selector & Completion Toggle */}
-            <div className="flex items-center space-x-3 flex-wrap sm:flex-nowrap">
-              {/* Change Routine Select */}
-              <div className="flex items-center space-x-2">
-                <span className="text-xs text-gray-400 font-mono hidden sm:inline">Routine:</span>
-                <select
-                  value={
-                    Object.entries(ROUTINE_TEMPLATES).find(
-                      ([, t]) => t.name === scheduledDay?.routineName
-                    )?.[0] || "custom"
-                  }
-                  onChange={(e) => {
-                    const template = ROUTINE_TEMPLATES[e.target.value];
-                    if (template) handleSwitchRoutine(template);
-                  }}
-                  className="bg-surface-elevated border border-surface-border rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-brand-cyan transition-colors"
-                >
-                  {Object.entries(ROUTINE_TEMPLATES).map(([key, template]) => (
-                    <option key={key} value={key} className="bg-[#12141a] text-white">
-                      {template.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Mark Completed Toggle */}
-              {scheduledDay?.isCompleted ? (
-                <button
-                  onClick={handleToggleManualComplete}
-                  className="px-3.5 py-2 rounded-xl bg-brand-emerald/15 border border-brand-emerald/30 text-brand-emerald font-bold text-xs flex items-center space-x-1.5 hover:bg-brand-emerald/25 transition-all"
-                  title="Click to toggle completion status"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Completed</span>
-                </button>
-              ) : (
-                <button
-                  onClick={handleToggleManualComplete}
-                  className="px-3.5 py-2 rounded-xl bg-surface-elevated border border-surface-border hover:border-surface-border/80 text-gray-400 hover:text-white font-semibold text-xs flex items-center space-x-1.5 transition-all"
-                  title="Mark as completed"
-                >
-                  <Check className="w-3.5 h-3.5" />
-                  <span>Mark Done</span>
-                </button>
-              )}
-            </div>
+            {/* Routine Switcher Dropdown */}
+            <select
+              value={
+                Object.entries(ROUTINE_TEMPLATES).find(
+                  ([, t]) => t.name === scheduledDay?.routineName
+                )?.[0] || "custom"
+              }
+              onChange={(e) => {
+                const template = ROUTINE_TEMPLATES[e.target.value];
+                if (template) handleSwitchRoutine(template);
+              }}
+              className="bg-[#2C2C2E] border border-[#38383A] rounded-xl px-2.5 py-1.5 text-xs font-semibold text-white focus:outline-none focus:border-[#0A84FF] transition-colors"
+            >
+              {Object.entries(ROUTINE_TEMPLATES).map(([key, template]) => (
+                <option key={key} value={key} className="bg-[#1C1C1E]">
+                  {template.name.split("(")[0]}
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* =========================================================================
               ROUTINE HEADER CARD & REST TIMER HUD
               ========================================================================= */}
-          <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="p-5 rounded-[22px] bg-[#1C1C1E] border border-[#2C2C2E]/60 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
               <div className="flex items-center space-x-2">
-                <span className="text-xs font-mono uppercase tracking-wider text-brand-cyan">
-                  {selectedDate === todayStr ? "Today's Prescribed Session" : "Scheduled Session"}
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-[#0A84FF]">
+                  {selectedDate === todayStr ? "Today's Target Session" : "Prescribed Session"}
                 </span>
                 {scheduledDay?.focusMuscleGroups && (
                   <div className="flex items-center space-x-1">
                     {scheduledDay.focusMuscleGroups.map((m) => (
                       <span
                         key={m}
-                        className="text-[10px] uppercase font-mono px-2 py-0.5 rounded-full bg-surface-elevated text-gray-400 border border-surface-border"
+                        className="text-[9px] uppercase font-mono px-2 py-0.5 rounded-full bg-[#2C2C2E] text-[#8E8E93]"
                       >
                         {m}
                       </span>
@@ -568,110 +523,110 @@ export default function LiftTrackerPage() {
                   </div>
                 )}
               </div>
-              <h2 className="text-2xl font-bold text-white mt-1">{routineName}</h2>
-              <p className="text-xs text-gray-400 mt-1 max-w-xl">
-                {scheduledDay?.notes ||
-                  "Zero mock numbers. Set your weights to establish your progressive overload baselines."}
+              <h2 className="text-xl sm:text-2xl font-bold text-white tracking-tight mt-1">
+                {routineName}
+              </h2>
+              <p className="text-xs text-[#8E8E93] mt-0.5">
+                {scheduledDay?.notes || "Progressive overload hyper-focus session."}
               </p>
             </div>
 
-            {/* Floating / Docked Rest Timer HUD */}
-            <div className="flex items-center space-x-3 p-3 rounded-2xl bg-surface-elevated border border-surface-border flex-shrink-0">
+            {/* Rest Timer Capsule */}
+            <div className="flex items-center space-x-2.5 p-2.5 rounded-2xl bg-[#2C2C2E] border border-[#38383A] flex-shrink-0">
               <div className="flex items-center space-x-2">
-                <Timer className="w-5 h-5 text-brand-cyan" />
+                <Timer className="w-4 h-4 text-[#0A84FF]" />
                 <div>
-                  <div className="text-[10px] font-mono text-gray-400 uppercase">Rest Timer</div>
-                  <div className="text-lg font-black font-mono text-white">
+                  <div className="text-[9px] font-semibold text-[#8E8E93] uppercase">Rest Timer</div>
+                  <div className="text-base font-bold font-mono text-white leading-none">
                     {formatTimer(restSecondsRemaining)}
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center space-x-1 pl-2 border-l border-surface-border">
+              <div className="flex items-center space-x-1 pl-2 border-l border-[#38383A]">
                 <button
                   onClick={() => setIsTimerRunning(!isTimerRunning)}
-                  className="p-2 rounded-xl bg-surface hover:bg-surface-elevated text-gray-300 hover:text-white"
+                  className="p-1.5 rounded-lg bg-[#1C1C1E] text-white hover:bg-black transition-colors"
                 >
-                  {isTimerRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                  {isTimerRunning ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                 </button>
                 <button
                   onClick={() => {
                     setRestSecondsRemaining(120);
                     setIsTimerRunning(true);
                   }}
-                  className="p-2 rounded-xl bg-surface hover:bg-surface-elevated text-gray-300 hover:text-white"
+                  className="p-1.5 rounded-lg bg-[#1C1C1E] text-[#8E8E93] hover:text-white transition-colors"
                 >
-                  <RotateCcw className="w-4 h-4" />
+                  <RotateCcw className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
           </div>
 
           {/* =========================================================================
-              REST DAY VIEW OR EXERCISES LIST
+              REST DAY VIEW OR APPLE FITNESS EXERCISE CARDS
               ========================================================================= */}
           {scheduledDay?.dayType === "rest" ? (
-            <div className="rounded-3xl bg-surface border border-surface-border p-8 shadow-xl text-center space-y-5">
-              <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
-                <Coffee className="w-8 h-8" />
+            <div className="p-8 rounded-[24px] bg-[#1C1C1E] border border-[#2C2C2E]/60 text-center space-y-4 shadow-xl">
+              <div className="w-14 h-14 rounded-2xl bg-[#FF9500]/15 text-[#FF9500] flex items-center justify-center mx-auto">
+                <Coffee className="w-7 h-7" />
               </div>
               <div>
-                <span className="text-[10px] font-mono uppercase tracking-widest text-amber-400 font-bold">
-                  {selectedDate === todayStr ? "Today's Schedule" : "Scheduled Status"}
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-[#FF9500]">
+                  Rest & Muscle Growth Day
                 </span>
-                <h3 className="text-2xl font-bold text-white mt-1">Rest & Active Recovery</h3>
-                <p className="text-sm text-gray-400 max-w-md mx-auto mt-2 leading-relaxed">
-                  No lifting session scheduled for {formatFullDate(selectedDate)}. Muscle protein
-                  synthesis, glycogen replenishment, and CNS recovery occur on rest days.
+                <h3 className="text-xl font-bold text-white mt-1">Active Recovery Scheduled</h3>
+                <p className="text-xs text-[#8E8E93] max-w-sm mx-auto mt-1">
+                  Muscles grow outside the gym. Hit your protein and surplus targets for recovery.
                 </p>
               </div>
 
               <div className="pt-2">
-                <p className="text-xs text-gray-500 mb-3">
-                  Want to train today anyway? Select a routine to start logging:
-                </p>
-                <div className="flex flex-wrap items-center justify-center gap-2 max-w-xl mx-auto">
+                <p className="text-xs text-[#8E8E93] mb-2">Want to train anyway?</p>
+                <div className="flex flex-wrap items-center justify-center gap-1.5 max-w-md mx-auto">
                   {Object.entries(ROUTINE_TEMPLATES)
-                    .filter(([key]) => key !== "rest")
-                    .map(([key, template]) => (
+                    .filter(([k]) => k !== "rest")
+                    .map(([key, t]) => (
                       <button
                         key={key}
-                        onClick={() => handleSwitchRoutine(template)}
-                        className="px-3.5 py-2 rounded-xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border hover:border-brand-cyan/40 text-xs font-semibold text-gray-300 hover:text-white transition-all active:scale-95"
+                        onClick={() => handleSwitchRoutine(t)}
+                        className="px-3 py-1.5 rounded-xl bg-[#2C2C2E] hover:bg-[#38383A] text-xs font-semibold text-white transition-all active:scale-95"
                       >
-                        {template.name.split("(")[0].trim()}
+                        {t.name.split("(")[0]}
                       </button>
                     ))}
                 </div>
               </div>
             </div>
           ) : (
-            <div className="space-y-6">
+            <div className="space-y-4">
               {activeExercises.map((item, exIndex) => (
                 <div
                   key={item.exercise.id}
-                  className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl space-y-4"
+                  className="p-5 rounded-[22px] bg-[#1C1C1E] border border-[#2C2C2E]/60 shadow-xl space-y-3"
                 >
-                  {/* Exercise Title & Recommendation */}
-                  <div className="flex items-center justify-between">
+                  {/* Exercise Header */}
+                  <div className="flex items-center justify-between pb-2 border-b border-[#2C2C2E]">
                     <div>
-                      <span className="text-[10px] font-mono uppercase tracking-wider text-gray-400">
-                        {item.exercise.muscleGroup} • {item.exercise.isCompound ? "Compound Lift" : "Isolation"}
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-[#8E8E93]">
+                        {item.exercise.muscleGroup} • {item.exercise.isCompound ? "Compound" : "Isolation"}
                       </span>
-                      <h3 className="text-lg font-bold text-white">{item.exercise.name}</h3>
+                      <h3 className="text-base font-bold text-white tracking-tight">
+                        {item.exercise.name}
+                      </h3>
                     </div>
                     <div className="text-right">
-                      <span className="text-xs font-mono text-gray-400">Target Range</span>
-                      <div className="text-xs font-mono font-bold text-brand-cyan">
-                        {item.targetSets} sets × {item.targetReps} reps
+                      <span className="text-[10px] font-mono text-[#8E8E93]">Target</span>
+                      <div className="text-xs font-bold text-[#0A84FF] font-mono">
+                        {item.targetSets} sets × {item.targetReps}
                       </div>
                     </div>
                   </div>
 
-                  {/* Set Table */}
-                  <div className="divide-y divide-surface-border/60">
+                  {/* Grouped Set Table Rows (Apple Fitness Style) */}
+                  <div className="divide-y divide-[#2C2C2E]">
                     {/* Header */}
-                    <div className="grid grid-cols-12 text-[10px] font-mono uppercase text-gray-400 pb-2 px-2">
+                    <div className="grid grid-cols-12 text-[10px] font-semibold uppercase text-[#8E8E93] pb-1.5 px-1 font-mono">
                       <div className="col-span-2">Set</div>
                       <div className="col-span-4">Previous Target</div>
                       <div className="col-span-3 text-center">Weight</div>
@@ -683,26 +638,26 @@ export default function LiftTrackerPage() {
                     {item.sets.map((set, setIndex) => (
                       <div
                         key={set.id}
-                        className={`grid grid-cols-12 items-center py-3 px-2 rounded-xl transition-colors ${
-                          set.completed ? "bg-brand-emerald/5" : "hover:bg-surface-elevated/40"
+                        className={`grid grid-cols-12 items-center py-2.5 px-1 rounded-xl transition-colors ${
+                          set.completed ? "bg-[#30D158]/5" : "hover:bg-[#2C2C2E]/30"
                         }`}
                       >
-                        {/* Set Number */}
-                        <div className="col-span-2 flex items-center space-x-1.5 font-mono text-xs font-bold text-white">
+                        {/* Set # */}
+                        <div className="col-span-2 flex items-center space-x-1 font-mono text-xs font-bold text-white">
                           <span>#{set.setNumber}</span>
                           {set.isPr && (
-                            <span className="text-[9px] bg-brand-cyan/20 text-brand-cyan px-1 rounded">
+                            <span className="text-[8px] bg-[#0A84FF]/20 text-[#0A84FF] px-1 rounded">
                               PR
                             </span>
                           )}
                         </div>
 
-                        {/* Previous Benchmark Label */}
-                        <div className="col-span-4 text-xs font-mono text-gray-400">
+                        {/* Benchmark */}
+                        <div className="col-span-4 text-xs font-mono text-[#8E8E93] truncate">
                           {set.prevWeightLbs !== null && set.prevReps !== null ? (
                             `${set.prevWeightLbs} lbs × ${set.prevReps}`
                           ) : (
-                            <span className="text-gray-500 italic">None (Day 1)</span>
+                            <span className="text-[#8E8E93]/60 italic">None (Day 1)</span>
                           )}
                         </div>
 
@@ -710,7 +665,7 @@ export default function LiftTrackerPage() {
                         <div className="col-span-3 flex items-center justify-center space-x-1 font-mono">
                           <button
                             onClick={() => handleUpdateSetValue(exIndex, setIndex, "weightLbs", -5)}
-                            className="w-6 h-6 rounded bg-surface-elevated text-xs text-gray-400 hover:text-white flex items-center justify-center"
+                            className="w-5 h-5 rounded bg-[#2C2C2E] text-xs text-[#8E8E93] hover:text-white flex items-center justify-center"
                           >
                             -
                           </button>
@@ -723,11 +678,11 @@ export default function LiftTrackerPage() {
                               next[exIndex].sets[setIndex].weightLbs = parseFloat(e.target.value) || 0;
                               setActiveExercises(next);
                             }}
-                            className="text-xs font-bold text-white w-12 text-center bg-transparent focus:outline-none"
+                            className="text-xs font-bold text-white w-10 text-center bg-transparent focus:outline-none"
                           />
                           <button
                             onClick={() => handleUpdateSetValue(exIndex, setIndex, "weightLbs", 5)}
-                            className="w-6 h-6 rounded bg-surface-elevated text-xs text-gray-400 hover:text-white flex items-center justify-center"
+                            className="w-5 h-5 rounded bg-[#2C2C2E] text-xs text-[#8E8E93] hover:text-white flex items-center justify-center"
                           >
                             +
                           </button>
@@ -737,7 +692,7 @@ export default function LiftTrackerPage() {
                         <div className="col-span-2 flex items-center justify-center space-x-1 font-mono">
                           <button
                             onClick={() => handleUpdateSetValue(exIndex, setIndex, "reps", -1)}
-                            className="w-6 h-6 rounded bg-surface-elevated text-xs text-gray-400 hover:text-white flex items-center justify-center"
+                            className="w-5 h-5 rounded bg-[#2C2C2E] text-xs text-[#8E8E93] hover:text-white flex items-center justify-center"
                           >
                             -
                           </button>
@@ -750,27 +705,27 @@ export default function LiftTrackerPage() {
                               next[exIndex].sets[setIndex].reps = parseInt(e.target.value) || 0;
                               setActiveExercises(next);
                             }}
-                            className="text-xs font-bold text-white w-8 text-center bg-transparent focus:outline-none"
+                            className="text-xs font-bold text-white w-7 text-center bg-transparent focus:outline-none"
                           />
                           <button
                             onClick={() => handleUpdateSetValue(exIndex, setIndex, "reps", 1)}
-                            className="w-6 h-6 rounded bg-surface-elevated text-xs text-gray-400 hover:text-white flex items-center justify-center"
+                            className="w-5 h-5 rounded bg-[#2C2C2E] text-xs text-[#8E8E93] hover:text-white flex items-center justify-center"
                           >
                             +
                           </button>
                         </div>
 
-                        {/* Complete Checkbox */}
+                        {/* Circular Checkmark Button (Turns Apple Green #30D158) */}
                         <div className="col-span-1 flex justify-end">
                           <button
                             onClick={() => handleToggleSet(exIndex, setIndex)}
-                            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+                            className={`w-6 h-6 rounded-full flex items-center justify-center transition-all ${
                               set.completed
-                                ? "bg-brand-emerald text-black shadow-md shadow-brand-emerald/20"
-                                : "border border-surface-border text-transparent hover:border-brand-cyan/50"
+                                ? "bg-[#30D158] text-black shadow-md shadow-[#30D158]/30"
+                                : "border-2 border-[#38383A] text-transparent hover:border-[#0A84FF]"
                             }`}
                           >
-                            <Check className="w-4 h-4 stroke-[3]" />
+                            <Check className="w-3.5 h-3.5 stroke-[3]" />
                           </button>
                         </div>
                       </div>
@@ -779,54 +734,49 @@ export default function LiftTrackerPage() {
                 </div>
               ))}
 
-              {/* Bottom Action: Add Exercise to Session */}
+              {/* Add Exercise Action */}
               <div className="flex justify-center pt-2">
                 <button
                   onClick={() => setIsAddExerciseModalOpen(true)}
-                  className="px-5 py-3 rounded-2xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border hover:border-brand-cyan/40 text-xs font-bold text-gray-300 hover:text-white flex items-center space-x-2 transition-all active:scale-95"
+                  className="px-5 py-2.5 rounded-full bg-[#1C1C1E] hover:bg-[#2C2C2E] border border-[#2C2C2E] text-xs font-semibold text-white flex items-center space-x-2 transition-all active:scale-95 shadow-md"
                 >
-                  <Plus className="w-4 h-4 text-brand-cyan" />
-                  <span>Add Another Exercise to Today's Session</span>
+                  <Plus className="w-4 h-4 text-[#0A84FF]" />
+                  <span>Add Exercise to Session</span>
                 </button>
               </div>
             </div>
           )}
 
-          {/* =========================================================================
-              ADD EXERCISE MODAL
-              ========================================================================= */}
+          {/* Add Exercise Modal */}
           {isAddExerciseModalOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-              <div className="w-full max-w-lg rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl space-y-4 max-h-[85vh] flex flex-col">
-                <div className="flex items-center justify-between pb-3 border-b border-surface-border">
-                  <div className="flex items-center space-x-2">
-                    <Layers className="w-5 h-5 text-brand-cyan" />
-                    <h3 className="text-lg font-bold text-white">Add Exercise to Session</h3>
-                  </div>
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-fade-in">
+              <div className="w-full max-w-md rounded-3xl bg-[#1C1C1E] border border-[#38383A] p-6 shadow-2xl space-y-4 max-h-[80vh] flex flex-col">
+                <div className="flex items-center justify-between pb-3 border-b border-[#2C2C2E]">
+                  <h3 className="text-base font-bold text-white">Add Exercise</h3>
                   <button
                     onClick={() => setIsAddExerciseModalOpen(false)}
-                    className="p-1.5 rounded-xl hover:bg-surface-elevated text-gray-400 hover:text-white"
+                    className="p-1.5 rounded-full bg-[#2C2C2E] text-[#8E8E93] hover:text-white"
                   >
-                    <X className="w-5 h-5" />
+                    <X className="w-4 h-4" />
                   </button>
                 </div>
 
-                <div className="overflow-y-auto space-y-2 pr-1 flex-1">
+                <div className="overflow-y-auto space-y-1.5 pr-1 flex-1">
                   {exercises
                     .filter((ex) => !scheduledDay?.exerciseIds.includes(ex.id))
                     .map((ex) => (
                       <div
                         key={ex.id}
                         onClick={() => handleAddExerciseToWorkout(ex)}
-                        className="flex items-center justify-between p-3.5 rounded-2xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border hover:border-brand-cyan/50 cursor-pointer transition-all"
+                        className="flex items-center justify-between p-3 rounded-2xl bg-[#2C2C2E]/60 hover:bg-[#2C2C2E] border border-[#38383A] cursor-pointer transition-colors"
                       >
                         <div>
-                          <div className="text-sm font-bold text-white">{ex.name}</div>
-                          <div className="text-[11px] font-mono text-gray-400 capitalize">
+                          <div className="text-xs font-bold text-white">{ex.name}</div>
+                          <div className="text-[10px] text-[#8E8E93] font-mono capitalize">
                             {ex.muscleGroup} • {ex.isCompound ? "Compound" : "Isolation"}
                           </div>
                         </div>
-                        <Plus className="w-4 h-4 text-brand-cyan" />
+                        <Plus className="w-4 h-4 text-[#0A84FF]" />
                       </div>
                     ))}
                 </div>

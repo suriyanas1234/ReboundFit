@@ -3,26 +3,38 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
-import { db, LocalWeighIn, LocalMealLog, LocalProgressPhoto } from "@/lib/db";
+import { db, LocalWeighIn, LocalMealLog, LocalScheduledWorkout } from "@/lib/db";
 import { calculateWeightTrend, SmoothedWeightPoint } from "@/algorithms/weightTrend";
-import { RateOfGainGauge } from "@/components/dashboard/RateOfGainGauge";
-import { DualProgressRings } from "@/components/dashboard/DualProgressRings";
-import { WeightTrendChart } from "@/components/dashboard/WeightTrendChart";
+import { getOrCreateScheduledWorkoutForDate } from "@/algorithms/workoutScheduler";
 import { QuickWeighInModal } from "@/components/dashboard/QuickWeighInModal";
-import { Dumbbell, Camera, ChevronRight, Sparkles, Scale, Plus, Calendar } from "lucide-react";
+import {
+  Flame,
+  Dumbbell,
+  Scale,
+  UtensilsCrossed,
+  ChevronRight,
+  Plus,
+  Play,
+  ArrowUpRight,
+  Coffee,
+  CheckCircle2,
+  Calendar,
+} from "lucide-react";
 
-export default function DashboardPage() {
+export default function SummaryPage() {
   const { user, profile } = useAuth();
   const [trendData, setTrendData] = useState<SmoothedWeightPoint[]>([]);
   const [todayMeals, setTodayMeals] = useState<LocalMealLog[]>([]);
-  const [baselinePhoto, setBaselinePhoto] = useState<LocalProgressPhoto | null>(null);
+  const [todayWorkout, setTodayWorkout] = useState<LocalScheduledWorkout | null>(null);
   const [isWeighInOpen, setIsWeighInOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  const loadDashboardData = async () => {
+  const todayStr = new Date().toISOString().split("T")[0]; // "2026-10-11"
+
+  const loadSummaryData = async () => {
     if (!user) return;
     try {
-      // 1. Fetch Weigh-Ins for current user & Calculate Trend
+      // 1. Fetch Weigh-Ins & Calculate Trend
       const weighIns = await db.weighIns.where("userId").equals(user.id).toArray();
       if (weighIns.length > 0) {
         const smoothed = calculateWeightTrend(
@@ -30,12 +42,10 @@ export default function DashboardPage() {
         );
         setTrendData(smoothed);
       } else if (profile?.currentWeightLbs) {
-        // If device has no local weigh-in yet, seed baseline from authenticated profile
-        const today = new Date().toISOString().split("T")[0];
         const baselineWeighIn: LocalWeighIn = {
-          id: `weigh-${user.id}-${today}`,
+          id: `weigh-${user.id}-${todayStr}`,
           userId: user.id,
-          date: today,
+          date: todayStr,
           rawWeightLbs: profile.currentWeightLbs,
           rawWeightKg: Number((profile.currentWeightLbs * 0.453592).toFixed(1)),
           trendWeightLbs: profile.currentWeightLbs,
@@ -46,51 +56,52 @@ export default function DashboardPage() {
         };
         await db.weighIns.put(baselineWeighIn);
         setTrendData(
-          calculateWeightTrend([
-            { date: today, rawWeightLbs: profile.currentWeightLbs },
-          ])
+          calculateWeightTrend([{ date: todayStr, rawWeightLbs: profile.currentWeightLbs }])
         );
-      } else {
-        setTrendData([]);
       }
 
-      // 2. Fetch Today's Meals for current user
-      const today = new Date().toISOString().split("T")[0];
+      // 2. Fetch Today's Meals
       const meals = await db.mealLogs
         .where("userId")
         .equals(user.id)
-        .and((m) => m.date === today)
+        .and((m) => m.date === todayStr)
         .toArray();
       setTodayMeals(meals);
 
-      // 3. Fetch Baseline Photo
-      const photo = await db.photos
-        .where("userId")
-        .equals(user.id)
-        .and((p) => p.isBaseline === true)
-        .first();
-      if (photo) setBaselinePhoto(photo);
+      // 3. Fetch Today's Scheduled Workout
+      const workout = await getOrCreateScheduledWorkoutForDate(
+        user.id,
+        todayStr,
+        (profile?.trainingSplit || "ppl") as any,
+        "08:00",
+        profile?.workoutDaysPerWeek,
+        profile?.customWeeklySchedule as any
+      );
+      setTodayWorkout(workout);
     } catch (err) {
-      console.error("Failed to load dashboard data:", err);
+      console.error("Failed to load Apple Health summary data:", err);
     } finally {
       setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadDashboardData();
+    loadSummaryData();
   }, [user, profile]);
 
-  // Compute macro totals for today
+  // Macro Totals
   const consumedCalories = todayMeals.reduce((acc, m) => acc + m.calories, 0);
   const consumedProtein = todayMeals.reduce((acc, m) => acc + m.proteinG, 0);
   const consumedCarbs = todayMeals.reduce((acc, m) => acc + m.carbG, 0);
   const consumedFat = todayMeals.reduce((acc, m) => acc + m.fatG, 0);
 
-  // Dynamic week calculation from user's actual profile creation date
-  const createdAtTime = profile?.createdAt ? new Date(profile.createdAt).getTime() : Date.now();
-  const daysElapsed = Math.max(1, Math.ceil((Date.now() - createdAtTime) / (1000 * 60 * 60 * 24)));
-  const currentWeekNumber = Math.ceil(daysElapsed / 7);
+  const targetCalories = profile?.targetCalories || 2600;
+  const targetProtein = profile?.targetProteinG || 160;
+
+  // Calorie & Protein Progress Percentages
+  const caloriePercent = Math.min(100, Math.round((consumedCalories / targetCalories) * 100));
+  const proteinPercent = Math.min(100, Math.round((consumedProtein / targetProtein) * 100));
+  const calorieRemainder = targetCalories - consumedCalories;
 
   const latestTrendPoint = trendData[trendData.length - 1] || {
     rateOfGainLbsPerWeek: 0,
@@ -98,174 +109,290 @@ export default function DashboardPage() {
     trendWeightLbs: profile?.currentWeightLbs || 0,
   };
 
-  const getSplitDisplayName = (split?: string) => {
-    switch (split) {
-      case "ppl":
-        return "Push Day A (Chest & Triceps Hypertrophy)";
-      case "upper_lower":
-        return "Upper Body A (Chest, Back & Delts)";
-      case "full_body":
-        return "Full Body Routine A (Squat, Bench, Rows)";
-      default:
-        return "Custom Overload Session";
-    }
-  };
+  const formattedEyebrowDate = new Date().toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "short",
+    day: "numeric",
+  }).toUpperCase();
+
+  const userInitial = user?.name ? user.name.charAt(0).toUpperCase() : "A";
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="space-y-6 animate-fade-in">
       {/* =========================================================================
-          TOP BANNER: DYNAMIC BULK PHASE & WEIGH-IN TRIGGER
+          APPLE HEALTH LARGE TITLE HEADER
+          Eyebrow Date, Massive Title: "Summary", Profile Avatar Pinned Top-Right
           ========================================================================= */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-3xl bg-surface border border-surface-border">
-        <div className="flex items-center space-x-3">
-          <div className="p-2.5 rounded-2xl bg-brand-cyan/15 text-brand-cyan flex items-center justify-center">
-            <Sparkles className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-mono font-bold text-brand-cyan uppercase tracking-wider">
-                Phase: {profile?.primaryGoal === "recomp" ? "Body Recomposition" : "Lean Bulk"}
-              </span>
-              <span className="text-xs text-gray-500">•</span>
-              <span className="text-xs text-gray-400 font-mono">Week {currentWeekNumber}</span>
-            </div>
-            <h2 className="text-base font-bold text-white">
-              Day {daysElapsed} Active • Target: {profile?.targetGainRateLbsPerWeek ? `+${profile.targetGainRateLbsPerWeek} lbs/wk` : "Maintain"}
-            </h2>
-          </div>
+      <header className="flex items-end justify-between pt-2 pb-1">
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-wider text-[#8E8E93] block">
+            {formattedEyebrowDate}
+          </span>
+          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight text-white mt-0.5">
+            Summary
+          </h1>
         </div>
 
+        {/* Circular Profile Avatar */}
+        <div className="w-9 h-9 rounded-full bg-[#2C2C2E] border border-[#38383A] flex items-center justify-center font-bold text-xs text-white shadow-md">
+          {userInitial}
+        </div>
+      </header>
+
+      {/* =========================================================================
+          FAVORITES SECTION HEADER (Apple Health HIG)
+          ========================================================================= */}
+      <div className="flex items-center justify-between pt-1">
+        <h2 className="text-lg font-bold text-white tracking-tight">Favorites</h2>
         <button
           onClick={() => setIsWeighInOpen(true)}
-          className="flex items-center justify-center space-x-2 px-4 py-2.5 rounded-2xl bg-surface-elevated border border-surface-border hover:border-brand-cyan/40 text-sm font-semibold text-white transition-all active:scale-95"
+          className="text-xs font-semibold text-[#0A84FF] hover:underline"
         >
-          <Scale className="w-4 h-4 text-brand-cyan" />
-          <span>Quick Weigh-In</span>
+          + Log Metric
         </button>
       </div>
 
       {/* =========================================================================
-          ANALYTICAL ROW 1: SPEEDOMETER & FUELING RINGS
+          FAVORITES HEALTH METRIC CARDS (Apple Health Category Accents)
           ========================================================================= */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <RateOfGainGauge
-          rateOfGainLbsPerWeek={latestTrendPoint.rateOfGainLbsPerWeek}
-          gainZone={latestTrendPoint.gainZone}
-          targetGainRateLbsPerWeek={profile?.targetGainRateLbsPerWeek || 0.50}
-          dataPointsCount={trendData.length}
-        />
-
-        <DualProgressRings
-          consumedCalories={consumedCalories}
-          targetCalories={profile?.targetCalories || 2600}
-          consumedProtein={consumedProtein}
-          targetProtein={profile?.targetProteinG || 160}
-          consumedCarbs={consumedCarbs}
-          targetCarbs={profile?.targetCarbG || 320}
-          consumedFat={consumedFat}
-          targetFat={profile?.targetFatG || 70}
-        />
-      </div>
-
-      {/* =========================================================================
-          ANALYTICAL ROW 2: 7-DAY WEIGHT TRENDLINE
-          ========================================================================= */}
-      <WeightTrendChart
-        data={trendData}
-        onOpenWeighIn={() => setIsWeighInOpen(true)}
-      />
-
-      {/* =========================================================================
-          QUICK ACTION LAUNCH CARDS (Schedule, Routine & Photo Vault)
-          ========================================================================= */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Workout Schedule Launch Card */}
+      <div className="space-y-3.5">
+        {/* CARD 1: ACTIVE ENERGY / CALORIC SURPLUS (#FF9500 Flame Orange) */}
         <Link
-          href="/lift?view=schedule"
-          className="group block p-6 rounded-3xl bg-surface border border-surface-border hover:border-brand-cyan/40 transition-all shadow-xl relative overflow-hidden"
+          href="/food"
+          className="block p-4 rounded-[20px] bg-[#1C1C1E] border border-[#2C2C2E]/60 hover:border-[#38383A] transition-all active:scale-[0.99] shadow-lg"
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3.5">
-              <div className="p-3 rounded-2xl bg-brand-cyan/15 text-brand-cyan group-hover:scale-110 transition-transform">
-                <Calendar className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center space-x-2">
+              <div className="w-7 h-7 rounded-lg bg-[#FF9500]/20 text-[#FF9500] flex items-center justify-center">
+                <Flame className="w-4 h-4 fill-current" />
               </div>
-              <div>
-                <span className="text-[11px] font-mono uppercase tracking-wider text-brand-cyan">
-                  Workout Schedule
-                </span>
-                <h4 className="text-base font-bold text-white group-hover:text-brand-cyan transition-colors">
-                  Date-by-Date Plan
-                </h4>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  View scheduled lifts by date & sync with Google Calendar
-                </p>
-              </div>
+              <span className="text-xs font-semibold text-[#FF9500] tracking-wide">
+                Active Energy / Surplus
+              </span>
             </div>
-            <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-brand-cyan group-hover:translate-x-1 transition-all" />
+            <div className="flex items-center space-x-1 text-[#8E8E93] text-xs font-mono">
+              <span>TODAY</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          <div className="flex items-baseline justify-between mt-2">
+            <div>
+              <span className="text-3xl font-extrabold text-white tracking-tight font-sans">
+                {consumedCalories.toLocaleString()}
+              </span>
+              <span className="text-sm font-semibold text-[#8E8E93] ml-1.5">
+                / {targetCalories.toLocaleString()} kcal
+              </span>
+            </div>
+            <span className="text-xs font-semibold text-[#8E8E93] font-mono">
+              {caloriePercent}%
+            </span>
+          </div>
+
+          {/* Apple Health Activity Bar Gauge */}
+          <div className="w-full h-2 rounded-full bg-[#2C2C2E] overflow-hidden mt-3">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[#FF9500] to-[#FFD60A] transition-all duration-500"
+              style={{ width: `${caloriePercent}%` }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-xs text-[#8E8E93] mt-2.5">
+            <span>
+              {calorieRemainder > 0
+                ? `${calorieRemainder.toLocaleString()} kcal remaining for surplus`
+                : `+${Math.abs(calorieRemainder).toLocaleString()} kcal surplus exceeded`}
+            </span>
+            <span className="text-[11px] font-mono text-gray-400">
+              Carbs: {consumedCarbs}g • Fat: {consumedFat}g
+            </span>
           </div>
         </Link>
 
-        {/* Workout Session Launch Card */}
+        {/* CARD 2: PROTEIN INTAKE (#FF2D55 Hot Pink / Activity Red) */}
         <Link
-          href="/lift?view=session"
-          className="group block p-6 rounded-3xl bg-surface border border-surface-border hover:border-brand-emerald/40 transition-all shadow-xl relative overflow-hidden"
+          href="/food"
+          className="block p-4 rounded-[20px] bg-[#1C1C1E] border border-[#2C2C2E]/60 hover:border-[#38383A] transition-all active:scale-[0.99] shadow-lg"
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3.5">
-              <div className="p-3 rounded-2xl bg-brand-emerald/15 text-brand-emerald group-hover:scale-110 transition-transform">
-                <Dumbbell className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center space-x-2">
+              <div className="w-7 h-7 rounded-lg bg-[#FF2D55]/20 text-[#FF2D55] flex items-center justify-center">
+                <UtensilsCrossed className="w-4 h-4" />
               </div>
-              <div>
-                <span className="text-[11px] font-mono uppercase tracking-wider text-brand-emerald">
-                  Active Overload
-                </span>
-                <h4 className="text-base font-bold text-white group-hover:text-brand-emerald transition-colors">
-                  {getSplitDisplayName(profile?.trainingSplit)}
-                </h4>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  Tap to log progressive overload sets with inline session targets
-                </p>
-              </div>
+              <span className="text-xs font-semibold text-[#FF2D55] tracking-wide">
+                Protein Intake
+              </span>
             </div>
-            <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-brand-emerald group-hover:translate-x-1 transition-all" />
+            <div className="flex items-center space-x-1 text-[#8E8E93] text-xs font-mono">
+              <span>TODAY</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          <div className="flex items-baseline justify-between mt-2">
+            <div>
+              <span className="text-3xl font-extrabold text-white tracking-tight font-sans">
+                {consumedProtein}
+              </span>
+              <span className="text-sm font-semibold text-[#8E8E93] ml-1.5">
+                / {targetProtein} g
+              </span>
+            </div>
+            <span className="text-xs font-semibold text-[#8E8E93] font-mono">
+              {proteinPercent}%
+            </span>
+          </div>
+
+          {/* Apple Health Activity Bar Gauge */}
+          <div className="w-full h-2 rounded-full bg-[#2C2C2E] overflow-hidden mt-3">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-[#FF2D55] to-[#FF6482] transition-all duration-500"
+              style={{ width: `${proteinPercent}%` }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-xs text-[#8E8E93] mt-2.5">
+            <span>
+              {targetProtein - consumedProtein > 0
+                ? `${targetProtein - consumedProtein}g to reach daily synthesis goal`
+                : "Target met! Optimal muscle recovery."}
+            </span>
+            <span className="text-[11px] font-mono text-[#FF2D55]">
+              {(profile?.proteinRatioPerLb || 0.9).toFixed(2)} g/lb
+            </span>
           </div>
         </Link>
 
-        {/* Photo Vault Launch Card */}
+        {/* CARD 3: WEIGHT TREND (#AF52DE Purple / Violet) */}
         <Link
           href="/vault"
-          className="group block p-6 rounded-3xl bg-surface border border-surface-border hover:border-brand-cyan/40 transition-all shadow-xl relative overflow-hidden"
+          className="block p-4 rounded-[20px] bg-[#1C1C1E] border border-[#2C2C2E]/60 hover:border-[#38383A] transition-all active:scale-[0.99] shadow-lg"
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3.5">
-              <div className="p-3 rounded-2xl bg-brand-cyan/15 text-brand-cyan group-hover:scale-110 transition-transform">
-                <Camera className="w-6 h-6" />
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center space-x-2">
+              <div className="w-7 h-7 rounded-lg bg-[#AF52DE]/20 text-[#AF52DE] flex items-center justify-center">
+                <Scale className="w-4 h-4" />
               </div>
-              <div>
-                <span className="text-[11px] font-mono uppercase tracking-wider text-brand-cyan">
-                  Physique Vault
-                </span>
-                <h4 className="text-base font-bold text-white group-hover:text-brand-cyan transition-colors">
-                  Standardized Photos
-                </h4>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  {baselinePhoto
-                    ? "Baseline reference photo active for ghost overlay"
-                    : "No photos yet — snap your Day 1 standardized reference"}
-                </p>
-              </div>
+              <span className="text-xs font-semibold text-[#AF52DE] tracking-wide">
+                Body Weight Trend
+              </span>
             </div>
-            <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-brand-cyan group-hover:translate-x-1 transition-all" />
+            <div className="flex items-center space-x-1 text-[#8E8E93] text-xs font-mono">
+              <span>7-DAY AVG</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          <div className="flex items-baseline justify-between mt-2">
+            <div>
+              <span className="text-3xl font-extrabold text-white tracking-tight font-sans">
+                {latestTrendPoint.trendWeightLbs.toFixed(1)}
+              </span>
+              <span className="text-sm font-semibold text-[#8E8E93] ml-1.5">lbs</span>
+            </div>
+
+            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-[#AF52DE]/20 text-[#AF52DE] font-mono">
+              {latestTrendPoint.rateOfGainLbsPerWeek > 0
+                ? `+${latestTrendPoint.rateOfGainLbsPerWeek.toFixed(2)}`
+                : latestTrendPoint.rateOfGainLbsPerWeek.toFixed(2)}{" "}
+              lbs/wk
+            </span>
+          </div>
+
+          {/* Mini Apple Health Sparkline Visualization */}
+          <div className="h-10 flex items-end space-x-2 pt-2 mt-2">
+            {trendData.slice(-7).map((pt, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                <div
+                  className="w-full rounded-md bg-[#AF52DE]/40 hover:bg-[#AF52DE] transition-colors"
+                  style={{
+                    height: `${Math.max(12, Math.min(36, ((pt.trendWeightLbs % 10) + 1) * 3))}px`,
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between text-xs text-[#8E8E93] mt-2 border-t border-[#2C2C2E] pt-2">
+            <span>
+              Target Gain: +{profile?.targetGainRateLbsPerWeek || 0.5} lbs/week
+            </span>
+            <span className="text-[#AF52DE] font-semibold text-[11px]">
+              {latestTrendPoint.gainZone === "sweet_spot" || latestTrendPoint.gainZone === "mild_gain"
+                ? "Optimal Lean Bulk Zone"
+                : "Maintenance / Tracking"}
+            </span>
+          </div>
+        </Link>
+
+        {/* CARD 4: WORKOUT TODAY SNAPSHOT (#0A84FF Electric Blue) */}
+        <Link
+          href="/lift"
+          className="block p-4 rounded-[20px] bg-[#1C1C1E] border border-[#2C2C2E]/60 hover:border-[#38383A] transition-all active:scale-[0.99] shadow-lg"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center space-x-2">
+              <div className="w-7 h-7 rounded-lg bg-[#0A84FF]/20 text-[#0A84FF] flex items-center justify-center">
+                {todayWorkout?.dayType === "rest" ? (
+                  <Coffee className="w-4 h-4 text-amber-400" />
+                ) : (
+                  <Dumbbell className="w-4 h-4" />
+                )}
+              </div>
+              <span className="text-xs font-semibold text-[#0A84FF] tracking-wide">
+                Today&apos;s Workout
+              </span>
+            </div>
+            <div className="flex items-center space-x-1 text-[#8E8E93] text-xs font-mono">
+              <span>{todayWorkout?.scheduledTime || "08:00 AM"}</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </div>
+          </div>
+
+          <div className="mt-2">
+            <div className="text-xl font-bold text-white tracking-tight">
+              {todayWorkout?.routineName || "Push Day A"}
+            </div>
+            <p className="text-xs text-[#8E8E93] mt-0.5 line-clamp-1">
+              {todayWorkout?.notes || "Progressive overload hyper-focus session."}
+            </p>
+          </div>
+
+          {/* Muscle Focus Chips & Action */}
+          <div className="flex items-center justify-between mt-3 pt-2 border-t border-[#2C2C2E]">
+            <div className="flex items-center space-x-1.5 flex-wrap">
+              {todayWorkout?.focusMuscleGroups?.slice(0, 3).map((m) => (
+                <span
+                  key={m}
+                  className="px-2 py-0.5 rounded-md bg-[#2C2C2E] text-[10px] font-mono uppercase text-[#8E8E93]"
+                >
+                  {m}
+                </span>
+              ))}
+            </div>
+
+            {todayWorkout?.isCompleted ? (
+              <span className="text-xs font-bold text-[#30D158] flex items-center space-x-1 font-mono">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Completed</span>
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full bg-[#0A84FF] text-white text-xs font-bold flex items-center space-x-1 shadow-md shadow-[#0A84FF]/20">
+                <Play className="w-3 h-3 fill-current" />
+                <span>Start</span>
+              </span>
+            )}
           </div>
         </Link>
       </div>
 
-      {/* Quick Weigh-In Modal */}
+      {/* Quick Weigh-In Action Sheet */}
       <QuickWeighInModal
         isOpen={isWeighInOpen}
         onClose={() => setIsWeighInOpen(false)}
-        lastWeightLbs={trendData[trendData.length - 1]?.rawWeightLbs || profile?.currentWeightLbs || 175}
-        onWeightLogged={loadDashboardData}
+        lastWeightLbs={latestTrendPoint.trendWeightLbs}
+        onWeightLogged={loadSummaryData}
       />
     </div>
   );
