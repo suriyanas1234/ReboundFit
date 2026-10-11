@@ -13,20 +13,11 @@ export async function GET(request: Request) {
       const { data, error } = await supabase.auth.exchangeCodeForSession(code);
 
       if (!error && data?.user) {
-        // Query user's profile to verify onboarding completion status
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("id, target_calories")
-          .eq("id", data.user.id)
-          .maybeSingle();
-
-        // If user already has a configured profile, send directly to dashboard
-        if (profile?.target_calories) {
-          return NextResponse.redirect(`${origin}${next}`);
-        }
-
-        // If brand-new user or onboarding incomplete, redirect to onboarding
-        return NextResponse.redirect(`${origin}/?onboarding=true`);
+        // Exchange succeeded and user session is active.
+        // Redirect directly to the requested destination (default: /).
+        // AppShell handles gating: if onboarding is complete, dashboard loads;
+        // if not completed yet, the onboarding wizard is presented cleanly.
+        return NextResponse.redirect(`${origin}${next}`);
       }
 
       if (error) {

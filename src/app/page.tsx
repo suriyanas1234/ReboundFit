@@ -9,7 +9,7 @@ import { RateOfGainGauge } from "@/components/dashboard/RateOfGainGauge";
 import { DualProgressRings } from "@/components/dashboard/DualProgressRings";
 import { WeightTrendChart } from "@/components/dashboard/WeightTrendChart";
 import { QuickWeighInModal } from "@/components/dashboard/QuickWeighInModal";
-import { Dumbbell, Camera, ChevronRight, Sparkles, Scale, Plus } from "lucide-react";
+import { Dumbbell, Camera, ChevronRight, Sparkles, Scale, Plus, Calendar } from "lucide-react";
 
 export default function DashboardPage() {
   const { user, profile } = useAuth();
@@ -29,6 +29,27 @@ export default function DashboardPage() {
           weighIns.map((w) => ({ date: w.date, rawWeightLbs: w.rawWeightLbs }))
         );
         setTrendData(smoothed);
+      } else if (profile?.currentWeightLbs) {
+        // If device has no local weigh-in yet, seed baseline from authenticated profile
+        const today = new Date().toISOString().split("T")[0];
+        const baselineWeighIn: LocalWeighIn = {
+          id: `weigh-${user.id}-${today}`,
+          userId: user.id,
+          date: today,
+          rawWeightLbs: profile.currentWeightLbs,
+          rawWeightKg: Number((profile.currentWeightLbs * 0.453592).toFixed(1)),
+          trendWeightLbs: profile.currentWeightLbs,
+          rateOfGainLbsPerWeek: 0,
+          notes: "Starting Baseline Weigh-In",
+          synced: false,
+          createdAt: new Date().toISOString(),
+        };
+        await db.weighIns.put(baselineWeighIn);
+        setTrendData(
+          calculateWeightTrend([
+            { date: today, rawWeightLbs: profile.currentWeightLbs },
+          ])
+        );
       } else {
         setTrendData([]);
       }
@@ -58,7 +79,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     loadDashboardData();
-  }, [user]);
+  }, [user, profile]);
 
   // Compute macro totals for today
   const consumedCalories = todayMeals.reduce((acc, m) => acc + m.calories, 0);
@@ -155,28 +176,28 @@ export default function DashboardPage() {
       />
 
       {/* =========================================================================
-          QUICK ACTION LAUNCH CARDS (Routine & Photo Vault)
+          QUICK ACTION LAUNCH CARDS (Schedule, Routine & Photo Vault)
           ========================================================================= */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Workout Launch Card */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {/* Workout Schedule Launch Card */}
         <Link
-          href="/lift"
+          href="/lift?view=schedule"
           className="group block p-6 rounded-3xl bg-surface border border-surface-border hover:border-brand-cyan/40 transition-all shadow-xl relative overflow-hidden"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3.5">
               <div className="p-3 rounded-2xl bg-brand-cyan/15 text-brand-cyan group-hover:scale-110 transition-transform">
-                <Dumbbell className="w-6 h-6" />
+                <Calendar className="w-6 h-6" />
               </div>
               <div>
                 <span className="text-[11px] font-mono uppercase tracking-wider text-brand-cyan">
-                  Your Workout Split
+                  Workout Schedule
                 </span>
                 <h4 className="text-base font-bold text-white group-hover:text-brand-cyan transition-colors">
-                  {getSplitDisplayName(profile?.trainingSplit)}
+                  Date-by-Date Plan
                 </h4>
                 <p className="text-xs text-gray-400 mt-0.5">
-                  Tap to log progressive overload sets with inline session targets
+                  View scheduled lifts by date & sync with Google Calendar
                 </p>
               </div>
             </div>
@@ -184,21 +205,47 @@ export default function DashboardPage() {
           </div>
         </Link>
 
-        {/* Photo Vault Launch Card */}
+        {/* Workout Session Launch Card */}
         <Link
-          href="/vault"
+          href="/lift?view=session"
           className="group block p-6 rounded-3xl bg-surface border border-surface-border hover:border-brand-emerald/40 transition-all shadow-xl relative overflow-hidden"
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-3.5">
               <div className="p-3 rounded-2xl bg-brand-emerald/15 text-brand-emerald group-hover:scale-110 transition-transform">
-                <Camera className="w-6 h-6" />
+                <Dumbbell className="w-6 h-6" />
               </div>
               <div>
                 <span className="text-[11px] font-mono uppercase tracking-wider text-brand-emerald">
-                  Physique Vault
+                  Active Overload
                 </span>
                 <h4 className="text-base font-bold text-white group-hover:text-brand-emerald transition-colors">
+                  {getSplitDisplayName(profile?.trainingSplit)}
+                </h4>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Tap to log progressive overload sets with inline session targets
+                </p>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-brand-emerald group-hover:translate-x-1 transition-all" />
+          </div>
+        </Link>
+
+        {/* Photo Vault Launch Card */}
+        <Link
+          href="/vault"
+          className="group block p-6 rounded-3xl bg-surface border border-surface-border hover:border-brand-cyan/40 transition-all shadow-xl relative overflow-hidden"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3.5">
+              <div className="p-3 rounded-2xl bg-brand-cyan/15 text-brand-cyan group-hover:scale-110 transition-transform">
+                <Camera className="w-6 h-6" />
+              </div>
+              <div>
+                <span className="text-[11px] font-mono uppercase tracking-wider text-brand-cyan">
+                  Physique Vault
+                </span>
+                <h4 className="text-base font-bold text-white group-hover:text-brand-cyan transition-colors">
                   Standardized Photos
                 </h4>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -208,7 +255,7 @@ export default function DashboardPage() {
                 </p>
               </div>
             </div>
-            <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-brand-emerald group-hover:translate-x-1 transition-all" />
+            <ChevronRight className="w-5 h-5 text-gray-500 group-hover:text-brand-cyan group-hover:translate-x-1 transition-all" />
           </div>
         </Link>
       </div>

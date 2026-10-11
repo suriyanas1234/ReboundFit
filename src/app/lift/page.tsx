@@ -13,7 +13,10 @@ import {
   RotateCcw,
   Plus,
   Sparkles,
+  Calendar,
 } from "lucide-react";
+import { WorkoutScheduleView } from "@/components/schedule/WorkoutScheduleView";
+import { LocalScheduledWorkout } from "@/lib/db";
 
 interface ActiveSetState {
   id: string;
@@ -36,6 +39,7 @@ interface ActiveExerciseState {
 
 export default function LiftTrackerPage() {
   const { user, profile } = useAuth();
+  const [activeTab, setActiveTab] = useState<"schedule" | "session">("schedule");
   const [exercises, setExercises] = useState<LocalExercise[]>([]);
   const [routineName, setRoutineName] = useState<string>("Workout Session");
   const [activeExercises, setActiveExercises] = useState<ActiveExerciseState[]>([]);
@@ -46,16 +50,29 @@ export default function LiftTrackerPage() {
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Check URL query param ?view=session or ?view=schedule
   useEffect(() => {
-    const initWorkout = async () => {
-      if (!user) return;
-      const allExercises = await db.exercises.toArray();
-      setExercises(allExercises);
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const view = params.get("view");
+      if (view === "session") setActiveTab("session");
+      else if (view === "schedule") setActiveTab("schedule");
+    }
+  }, []);
 
-      // Determine exercises matching user's selected split
-      let selected: LocalExercise[] = [];
-      let name = "Custom Workout";
+  const loadRoutineExercises = async (targetRoutineName?: string, targetExerciseIds?: string[]) => {
+    if (!user) return;
+    const allExercises = await db.exercises.toArray();
+    setExercises(allExercises);
 
+    let selected: LocalExercise[] = [];
+    let name = targetRoutineName || "Workout Session";
+
+    if (targetExerciseIds && targetExerciseIds.length > 0) {
+      selected = targetExerciseIds
+        .map((id) => allExercises.find((e) => e.id === id))
+        .filter(Boolean) as LocalExercise[];
+    } else {
       const split = profile?.trainingSplit || "ppl";
       if (split === "ppl") {
         name = "Push Day A (Chest & Triceps Hypertrophy)";
@@ -76,49 +93,59 @@ export default function LiftTrackerPage() {
         name = "Custom / Blank Routine";
         selected = allExercises.slice(0, 3);
       }
+    }
 
-      setRoutineName(name);
+    setRoutineName(name);
 
-      // Fetch real user history for previous benchmarks (ZERO FAKE SEEDING)
-      const previousSets = await db.workoutSets
-        .where("userId")
-        .equals(user.id)
-        .toArray();
+    // Fetch real user history for previous benchmarks (ZERO FAKE SEEDING)
+    const previousSets = await db.workoutSets
+      .where("userId")
+      .equals(user.id)
+      .toArray();
 
-      const workoutSessionExercises: ActiveExerciseState[] = selected.slice(0, 4).map((ex) => {
-        // Find user's best set from prior workouts
-        const priorSetsForEx = previousSets
-          .filter((s) => s.exerciseId === ex.id && !s.isWarmup)
-          .sort((a, b) => b.weightLbs - a.weightLbs);
+    const workoutSessionExercises: ActiveExerciseState[] = selected.slice(0, 6).map((ex) => {
+      // Find user's best set from prior workouts
+      const priorSetsForEx = previousSets
+        .filter((s) => s.exerciseId === ex.id && !s.isWarmup)
+        .sort((a, b) => b.weightLbs - a.weightLbs);
 
-        const bestPrior = priorSetsForEx[0] || null;
+      const bestPrior = priorSetsForEx[0] || null;
 
-        const defaultWeight = bestPrior ? bestPrior.weightLbs : 0;
-        const defaultReps = bestPrior ? bestPrior.reps : 8;
+      const defaultWeight = bestPrior ? bestPrior.weightLbs : 0;
+      const defaultReps = bestPrior ? bestPrior.reps : 8;
 
-        return {
-          exercise: ex,
-          targetSets: 3,
-          targetReps: ex.isCompound ? "6-10" : "10-15",
-          restSeconds: ex.defaultRestSeconds,
-          sets: [1, 2, 3].map((setNum) => ({
-            id: `${ex.id}-s${setNum}`,
-            setNumber: setNum,
-            weightLbs: defaultWeight,
-            reps: defaultReps,
-            prevWeightLbs: bestPrior ? bestPrior.weightLbs : null,
-            prevReps: bestPrior ? bestPrior.reps : null,
-            completed: false,
-            isPr: false,
-          })),
-        };
-      });
+      return {
+        exercise: ex,
+        targetSets: 3,
+        targetReps: ex.isCompound ? "6-10" : "10-15",
+        restSeconds: ex.defaultRestSeconds,
+        sets: [1, 2, 3].map((setNum) => ({
+          id: `${ex.id}-s${setNum}`,
+          setNumber: setNum,
+          weightLbs: defaultWeight,
+          reps: defaultReps,
+          prevWeightLbs: bestPrior ? bestPrior.weightLbs : null,
+          prevReps: bestPrior ? bestPrior.reps : null,
+          completed: false,
+          isPr: false,
+        })),
+      };
+    });
 
-      setActiveExercises(workoutSessionExercises);
-    };
+    setActiveExercises(workoutSessionExercises);
+  };
 
-    initWorkout();
+  useEffect(() => {
+    loadRoutineExercises();
   }, [user, profile]);
+
+  const handleStartScheduledWorkout = async (scheduled: LocalScheduledWorkout) => {
+    await loadRoutineExercises(scheduled.routineName, scheduled.exerciseIds);
+    setActiveTab("session");
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  };
 
   // Timer Tick Effect
   useEffect(() => {
@@ -210,6 +237,21 @@ export default function LiftTrackerPage() {
       };
       await db.workoutSets.put(workoutSetRecord);
 
+      // Auto-mark today's scheduled workout as completed
+      try {
+        const today = new Date().toISOString().split("T")[0];
+        const todaySched = await db.scheduledWorkouts
+          .where("userId")
+          .equals(user.id)
+          .and((item) => item.date === today)
+          .first();
+        if (todaySched && !todaySched.isCompleted) {
+          await db.scheduledWorkouts.put({ ...todaySched, isCompleted: true });
+        }
+      } catch {
+        // Dexie table check
+      }
+
       // Auto-start rest timer
       setRestSecondsRemaining(nextExercises[exIndex].restSeconds);
       setIsTimerRunning(true);
@@ -238,25 +280,58 @@ export default function LiftTrackerPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-12">
-      {/* PR Celebration Alert Banner */}
-      {prCelebration && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-brand-cyan to-brand-emerald text-black px-6 py-3 rounded-2xl shadow-2xl font-black text-sm flex items-center space-x-2 animate-bounce">
-          <Trophy className="w-5 h-5" />
-          <span>{prCelebration}</span>
-        </div>
-      )}
+      {/* =========================================================================
+          TOP TAB BAR: WORKOUT SCHEDULE (CALENDAR) VS ACTIVE SESSION LOGGER
+          ========================================================================= */}
+      <div className="flex items-center space-x-2 p-1.5 rounded-2xl bg-surface border border-surface-border">
+        <button
+          onClick={() => setActiveTab("schedule")}
+          className={`flex-1 flex items-center justify-center space-x-2 py-3 rounded-xl text-xs font-bold transition-all ${
+            activeTab === "schedule"
+              ? "bg-brand-cyan/20 text-brand-cyan border border-brand-cyan/40 shadow-md shadow-brand-cyan/10"
+              : "text-gray-400 hover:text-white"
+          }`}
+        >
+          <Calendar className="w-4 h-4" />
+          <span>Workout Schedule & Google Calendar</span>
+        </button>
 
-      {/* Routine Header */}
-      <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <span className="text-xs font-mono uppercase tracking-wider text-brand-cyan">
-            Active Overload Session
-          </span>
-          <h2 className="text-2xl font-bold text-white mt-0.5">{routineName}</h2>
-          <p className="text-xs text-gray-400 mt-1">
-            Zero mock numbers. Set your Day 1 weights to establish your progressive overload baselines.
-          </p>
-        </div>
+        <button
+          onClick={() => setActiveTab("session")}
+          className={`flex-1 flex items-center justify-center space-x-2 py-3 rounded-xl text-xs font-bold transition-all ${
+            activeTab === "session"
+              ? "bg-brand-cyan/20 text-brand-cyan border border-brand-cyan/40 shadow-md shadow-brand-cyan/10"
+              : "text-gray-400 hover:text-white"
+          }`}
+        >
+          <Dumbbell className="w-4 h-4" />
+          <span>Active Session Logger ({routineName.split("(")[0].trim()})</span>
+        </button>
+      </div>
+
+      {activeTab === "schedule" ? (
+        <WorkoutScheduleView onStartScheduledWorkout={handleStartScheduledWorkout} />
+      ) : (
+        <>
+          {/* PR Celebration Alert Banner */}
+          {prCelebration && (
+            <div className="fixed top-5 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-brand-cyan to-brand-emerald text-black px-6 py-3 rounded-2xl shadow-2xl font-black text-sm flex items-center space-x-2 animate-bounce">
+              <Trophy className="w-5 h-5" />
+              <span>{prCelebration}</span>
+            </div>
+          )}
+
+          {/* Routine Header */}
+          <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <span className="text-xs font-mono uppercase tracking-wider text-brand-cyan">
+                Active Overload Session
+              </span>
+              <h2 className="text-2xl font-bold text-white mt-0.5">{routineName}</h2>
+              <p className="text-xs text-gray-400 mt-1">
+                Zero mock numbers. Set your Day 1 weights to establish your progressive overload baselines.
+              </p>
+            </div>
 
         {/* Floating / Docked Rest Timer HUD */}
         <div className="flex items-center space-x-3 p-3 rounded-2xl bg-surface-elevated border border-surface-border">
@@ -424,6 +499,8 @@ export default function LiftTrackerPage() {
           </div>
         ))}
       </div>
-    </div>
-  );
+    </>
+  )}
+</div>
+);
 }

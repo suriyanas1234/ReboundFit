@@ -16,29 +16,86 @@ import {
 } from "lucide-react";
 
 export function OnboardingWizard() {
-  const { user, completeOnboarding } = useAuth();
+  const { user, profile, completeOnboarding } = useAuth();
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  // Form State
-  const [formData, setFormData] = useState<OnboardingFormValues>({
-    weight: 175,
-    weightUnit: "lbs",
-    height: 178,
-    heightUnit: "ft_in",
-    heightFeet: 5,
-    heightInches: 10,
-    age: 26,
-    gender: "male",
-    primaryGoal: "lean_bulk",
-    gainRateTier: "moderate",
-    targetGainRateLbsPerWeek: 0.50,
-    activityLevel: "moderate",
-    trainingSplit: "ppl",
-    baselinePhotoDataUrl: undefined,
+  // Form State: Pre-populated with profile if already available, else standards
+  const [formData, setFormData] = useState<OnboardingFormValues>(() => {
+    if (profile) {
+      const heightInchesTotal = Math.round((profile.heightCm || 178) / 2.54);
+      return {
+        weight: profile.currentWeightLbs || 175,
+        weightUnit: profile.unitPreference === "metric" ? "kg" : "lbs",
+        height: profile.heightCm || 178,
+        heightUnit: profile.unitPreference === "metric" ? "cm" : "ft_in",
+        heightFeet: Math.floor(heightInchesTotal / 12) || 5,
+        heightInches: heightInchesTotal % 12 || 10,
+        age: profile.age || 26,
+        gender: profile.gender || "male",
+        primaryGoal: profile.primaryGoal || "lean_bulk",
+        gainRateTier:
+          (profile.targetGainRateLbsPerWeek || 0.5) <= 0.25
+            ? "conservative"
+            : (profile.targetGainRateLbsPerWeek || 0.5) >= 0.75
+            ? "aggressive"
+            : profile.primaryGoal === "recomp"
+            ? "maintain"
+            : "moderate",
+        targetGainRateLbsPerWeek: profile.targetGainRateLbsPerWeek ?? 0.5,
+        activityLevel: profile.activityLevel || "moderate",
+        trainingSplit: profile.trainingSplit || "ppl",
+        baselinePhotoDataUrl: undefined,
+      };
+    }
+    return {
+      weight: 175,
+      weightUnit: "lbs",
+      height: 178,
+      heightUnit: "ft_in",
+      heightFeet: 5,
+      heightInches: 10,
+      age: 26,
+      gender: "male",
+      primaryGoal: "lean_bulk",
+      gainRateTier: "moderate",
+      targetGainRateLbsPerWeek: 0.5,
+      activityLevel: "moderate",
+      trainingSplit: "ppl",
+      baselinePhotoDataUrl: undefined,
+    };
   });
 
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (profile) {
+      const heightInchesTotal = Math.round((profile.heightCm || 178) / 2.54);
+      setFormData((prev) => ({
+        ...prev,
+        weight: profile.currentWeightLbs || prev.weight,
+        weightUnit: profile.unitPreference === "metric" ? "kg" : "lbs",
+        height: profile.heightCm || prev.height,
+        heightUnit: profile.unitPreference === "metric" ? "cm" : "ft_in",
+        heightFeet: Math.floor(heightInchesTotal / 12) || 5,
+        heightInches: heightInchesTotal % 12 || 10,
+        age: profile.age || prev.age,
+        gender: profile.gender || prev.gender,
+        primaryGoal: profile.primaryGoal || prev.primaryGoal,
+        gainRateTier:
+          (profile.targetGainRateLbsPerWeek || 0.5) <= 0.25
+            ? "conservative"
+            : (profile.targetGainRateLbsPerWeek || 0.5) >= 0.75
+            ? "aggressive"
+            : profile.primaryGoal === "recomp"
+            ? "maintain"
+            : "moderate",
+        targetGainRateLbsPerWeek: profile.targetGainRateLbsPerWeek ?? prev.targetGainRateLbsPerWeek,
+        activityLevel: profile.activityLevel || prev.activityLevel,
+        trainingSplit: profile.trainingSplit || prev.trainingSplit,
+      }));
+    }
+  }, [profile]);
 
   // Step 1 Validation
   const isStep1Valid = formData.weight > 60 && formData.weight < 600 && formData.age >= 14 && formData.age <= 100;

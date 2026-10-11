@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   UtensilsCrossed,
   Dumbbell,
+  Calendar,
   Camera,
   Wifi,
   WifiOff,
@@ -26,8 +27,8 @@ interface AppShellProps {
 
 const NAV_ITEMS = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/lift", label: "Workouts & Schedule", icon: Calendar },
   { href: "/food", label: "Food Log", icon: UtensilsCrossed },
-  { href: "/lift", label: "Workout", icon: Dumbbell },
   { href: "/vault", label: "Photo Vault", icon: Camera },
 ];
 

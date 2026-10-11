@@ -104,6 +104,26 @@ export interface LocalProgressPhoto {
   synced: boolean;
 }
 
+export interface LocalScheduledWorkout {
+  id: string; // `sched-${userId}-${date}`
+  userId: string;
+  date: string; // YYYY-MM-DD
+  routineName: string;
+  splitType: 'ppl' | 'upper_lower' | 'full_body' | 'custom';
+  dayType: 'workout' | 'rest';
+  focusMuscleGroups: string[];
+  exerciseIds: string[];
+  scheduledTime?: string; // HH:mm, e.g. "08:00"
+  durationMinutes: number; // default 60
+  isCompleted: boolean;
+  completedWorkoutId?: string;
+  googleCalendarEventId?: string;
+  notes?: string;
+  synced: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface LocalSyncQueueItem {
   id: string;
   table: string;
@@ -124,9 +144,20 @@ export class ReboundFitDatabase extends Dexie {
   workoutSets!: Table<LocalWorkoutSet, string>;
   photos!: Table<LocalProgressPhoto, string>;
   syncQueue!: Table<LocalSyncQueueItem, string>;
+  scheduledWorkouts!: Table<LocalScheduledWorkout, string>;
 
   constructor() {
     super('ReboundFitLocalDB');
+    this.version(1).stores({
+      profiles: 'id',
+      weighIns: 'id, date, synced',
+      mealLogs: 'id, date, mealType, synced',
+      exercises: 'id, muscleGroup, isCompound',
+      workouts: 'id, startedAt, synced',
+      workoutSets: 'id, workoutId, exerciseId, synced',
+      photos: 'id, date, weekNumber, pose, synced',
+      syncQueue: 'id, table, status, timestamp',
+    });
     this.version(2).stores({
       profiles: 'id, userId, onboardingCompleted',
       weighIns: 'id, userId, date, synced',
@@ -136,6 +167,27 @@ export class ReboundFitDatabase extends Dexie {
       workoutSets: 'id, userId, workoutId, exerciseId, synced',
       photos: 'id, userId, date, weekNumber, isBaseline, synced',
       syncQueue: 'id, table, status, timestamp',
+    });
+    this.version(3).stores({
+      profiles: 'id, userId, email, onboardingCompleted',
+      weighIns: 'id, userId, date, synced',
+      mealLogs: 'id, userId, date, mealType, synced',
+      exercises: 'id, muscleGroup, isCompound',
+      workouts: 'id, userId, startedAt, synced',
+      workoutSets: 'id, userId, workoutId, exerciseId, synced',
+      photos: 'id, userId, date, weekNumber, isBaseline, synced',
+      syncQueue: 'id, table, status, timestamp',
+    });
+    this.version(4).stores({
+      profiles: 'id, userId, email, onboardingCompleted',
+      weighIns: 'id, userId, date, synced',
+      mealLogs: 'id, userId, date, mealType, synced',
+      exercises: 'id, muscleGroup, isCompound',
+      workouts: 'id, userId, startedAt, synced',
+      workoutSets: 'id, userId, workoutId, exerciseId, synced',
+      photos: 'id, userId, date, weekNumber, isBaseline, synced',
+      syncQueue: 'id, table, status, timestamp',
+      scheduledWorkouts: 'id, userId, date, dayType, isCompleted',
     });
   }
 }
