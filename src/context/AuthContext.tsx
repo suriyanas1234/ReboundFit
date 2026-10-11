@@ -10,7 +10,7 @@ export interface AuthUser {
   email: string;
   name: string;
   avatarUrl?: string;
-  provider: "google" | "email" | "guest";
+  provider: "google" | "email";
 }
 
 export interface OnboardingFormValues {
@@ -36,6 +36,7 @@ interface AuthContextType {
   isLoading: boolean;
   isAuthenticated: boolean;
   hasCompletedOnboarding: boolean;
+  isConfigured: boolean;
   signInWithGoogle: () => Promise<{ error?: string }>;
   signInWithEmail: (email: string) => Promise<{ success: boolean; message: string; error?: string }>;
   signOut: () => Promise<void>;
@@ -45,24 +46,21 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const LOCAL_AUTH_KEY = "reboundfit_auth_session";
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [profile, setProfile] = useState<LocalProfile | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Initialize Auth & Profile
   useEffect(() => {
     const initAuth = async () => {
       try {
         await purgeMockDataIfPresent();
         await seedExerciseLibrary();
 
-        // 1. Check Supabase Auth if configured
+        // 1. Check Supabase Auth session
         if (isSupabaseConfigured) {
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session?.user) {
+          const { data: { session }, error } = await supabase.auth.getSession();
+          if (!error && session?.user) {
             const authUser: AuthUser = {
               id: session.user.id,
               email: session.user.email || "",
@@ -72,20 +70,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             };
             setUser(authUser);
             await loadProfile(authUser.id);
-            setIsLoading(false);
-            return;
-          }
-        }
-
-        // 2. Check local authenticated session
-        const storedAuth = localStorage.getItem(LOCAL_AUTH_KEY);
-        if (storedAuth) {
-          try {
-            const parsedUser: AuthUser = JSON.parse(storedAuth);
-            setUser(parsedUser);
-            await loadProfile(parsedUser.id);
-          } catch {
-            localStorage.removeItem(LOCAL_AUTH_KEY);
           }
         }
       } catch (err) {
@@ -97,7 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     initAuth();
 
-    // Listen for Supabase auth state changes if configured
+    // 2. Listen for Supabase Auth state changes
     if (isSupabaseConfigured) {
       const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (session?.user) {
@@ -121,12 +105,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loadProfile = async (userId: string) => {
     try {
-      const existing = await db.profiles.where("userId").equals(userId).first();
-      if (existing) {
-        setProfile(existing);
-      } else {
-        setProfile(null);
+      // Check local Dexie first
+      let localProf = await db.profiles.where("userId").equals(userId).first();
+
+      // If not in Dexie and Supabase is active, check Supabase PostgreSQL
+      if (!localProf && isSupabaseConfigured) {
+        const { data: remote } = await supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", userId)
+          .maybeSingle();
+
+        if (remote && remote.target_calories) {
+          localProf = {
+            id: `profile-${userId}`,
+            userId,
+            email: remote.email || "",
+            name: remote.display_name || "Athlete",
+            onboardingCompleted: true,
+            gender: remote.gender || "male",
+            age: 26,
+            heightCm: Number(remote.height_cm) || 178,
+            currentWeightLbs: 175,
+            activityLevel: remote.activity_level || "moderate",
+            unitPreference: remote.unit_preference || "imperial",
+            primaryGoal: remote.gain_rate_goal === "recomp_maintenance" ? "recomp" : "lean_bulk",
+            targetGainRateLbsPerWeek: Number(remote.target_gain_lbs_per_week) || 0.50,
+            trainingSplit: "ppl",
+            proteinRatioPerLb: Number(remote.protein_ratio_per_lb) || 0.90,
+            fatPercentage: Number(remote.fat_calorie_percentage) || 0.25,
+            baseTdee: remote.base_tdee || 2400,
+            smoothedTdee: remote.smoothed_tdee || 2400,
+            targetCalories: remote.target_calories || 2650,
+            targetProteinG: remote.target_protein_g || 160,
+            targetCarbG: remote.target_carb_g || 330,
+            targetFatG: remote.target_fat_g || 70,
+            createdAt: remote.created_at || new Date().toISOString(),
+            updatedAt: remote.updated_at || new Date().toISOString(),
+          };
+          await db.profiles.put(localProf);
+        }
       }
+
+      setProfile(localProf || null);
     } catch (err) {
       console.error("Failed to load profile for user:", err);
     }
@@ -138,61 +159,65 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  // Google OAuth Sign-In
+  // Google OAuth Sign-In (Mandatory prompt: 'select_account' and redirect to /auth/callback)
   const signInWithGoogle = async (): Promise<{ error?: string }> => {
     try {
-      if (isSupabaseConfigured) {
-        const { error } = await supabase.auth.signInWithOAuth({
-          provider: "google",
-          options: {
-            redirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
-          },
-        });
-        if (error) return { error: error.message };
-        return {};
-      } else {
-        // High-fidelity zero-friction OAuth local flow
-        const googleUser: AuthUser = {
-          id: `usr_google_${Date.now()}`,
-          email: "athlete@reboundfit.app",
-          name: "Rebound Athlete",
-          provider: "google",
+      if (!isSupabaseConfigured) {
+        return {
+          error:
+            "Missing Supabase configuration. Please define NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your .env.local file or Vercel Environment Variables.",
         };
-        localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(googleUser));
-        setUser(googleUser);
-        await loadProfile(googleUser.id);
-        return {};
       }
+
+      const redirectUrl =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/auth/callback`
+          : undefined;
+
+      const { data, error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: {
+          queryParams: {
+            prompt: "select_account",
+            access_type: "offline",
+          },
+          redirectTo: redirectUrl,
+        },
+      });
+
+      if (error) return { error: error.message };
+      return {};
     } catch (err: any) {
-      return { error: err.message || "Failed to sign in with Google" };
+      return { error: err.message || "Failed to initiate Google sign in" };
     }
   };
 
   // Magic Link / Email Sign-In
   const signInWithEmail = async (email: string) => {
     try {
-      if (isSupabaseConfigured) {
-        const { error } = await supabase.auth.signInWithOtp({
-          email,
-          options: {
-            emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined,
-          },
-        });
-        if (error) return { success: false, message: error.message, error: error.message };
-        return { success: true, message: "Magic link sent! Check your email to log in." };
-      } else {
-        // Local email authentication session
-        const emailUser: AuthUser = {
-          id: `usr_${email.replace(/[^a-zA-Z0-9]/g, "_")}`,
-          email,
-          name: email.split("@")[0],
-          provider: "email",
+      if (!isSupabaseConfigured) {
+        return {
+          success: false,
+          message:
+            "Missing Supabase configuration. Please define NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY in your .env.local file or Vercel Environment Variables.",
+          error: "Supabase not configured",
         };
-        localStorage.setItem(LOCAL_AUTH_KEY, JSON.stringify(emailUser));
-        setUser(emailUser);
-        await loadProfile(emailUser.id);
-        return { success: true, message: `Signed in as ${email}` };
       }
+
+      const redirectUrl =
+        typeof window !== "undefined"
+          ? `${window.location.origin}/auth/callback`
+          : undefined;
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: redirectUrl,
+        },
+      });
+
+      if (error) return { success: false, message: error.message, error: error.message };
+      return { success: true, message: `Magic link sent to ${email}! Check your inbox.` };
     } catch (err: any) {
       return { success: false, message: err.message, error: err.message };
     }
@@ -203,7 +228,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (isSupabaseConfigured) {
       await supabase.auth.signOut();
     }
-    localStorage.removeItem(LOCAL_AUTH_KEY);
     setUser(null);
     setProfile(null);
   };
@@ -212,10 +236,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const completeOnboarding = async (data: OnboardingFormValues) => {
     if (!user) throw new Error("User must be authenticated to complete onboarding");
 
-    // Convert weight to lbs
     const weightLbs = data.weightUnit === "kg" ? Number((data.weight * 2.20462).toFixed(1)) : data.weight;
     
-    // Convert height to cm
     let heightCm = data.height;
     if (data.heightUnit === "ft_in") {
       const feet = data.heightFeet || 5;
@@ -230,11 +252,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       currentWeightLbs: weightLbs,
       activityLevel: data.activityLevel,
       targetGainRateLbsPerWeek: data.targetGainRateLbsPerWeek,
-      proteinRatioPerLb: 0.90, // 0.90g per lb lean bulk standard
-      fatPercentage: 0.25,     // 25% healthy fats
+      proteinRatioPerLb: 0.90,
+      fatPercentage: 0.25,
     };
 
-    // Calculate baseline TDEE & initial target macros
     const baseTdee = calculateInitialTdee(physiqueProfile);
     const macroTargets = calculateMacroTargets(baseTdee, physiqueProfile);
 
@@ -268,12 +289,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       updatedAt: now,
     };
 
-    // Save profile to Dexie
+    // Save to local Dexie
     await db.profiles.put(newProfile);
 
-    // Save Day 1 starting baseline weigh-in
+    // Day 1 Baseline weigh-in
     const startingWeighIn: LocalWeighIn = {
-      id: `weigh-${today}`,
+      id: `weigh-${user.id}-${today}`,
       userId: user.id,
       date: today,
       rawWeightLbs: weightLbs,
@@ -286,10 +307,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
     await db.weighIns.put(startingWeighIn);
 
-    // If baseline photo was provided, save it as isBaseline: true
+    // Save Baseline Photo if provided
     if (data.baselinePhotoDataUrl) {
       const baselinePhoto: LocalProgressPhoto = {
-        id: `photo-baseline-${Date.now()}`,
+        id: `photo-baseline-${user.id}-${Date.now()}`,
         userId: user.id,
         date: today,
         weekNumber: 1,
@@ -301,6 +322,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         synced: false,
       };
       await db.photos.put(baselinePhoto);
+    }
+
+    // Also persist to Supabase PostgreSQL if connected
+    if (isSupabaseConfigured) {
+      try {
+        await supabase.from("profiles").upsert({
+          id: user.id,
+          email: user.email,
+          display_name: user.name,
+          gender: data.gender,
+          birth_date: new Date(Date.now() - data.age * 365.25 * 24 * 60 * 60 * 1000).toISOString().split("T")[0],
+          height_cm: heightCm,
+          activity_level: data.activityLevel,
+          unit_preference: data.weightUnit === "kg" ? "metric" : "imperial",
+          gain_rate_goal: data.primaryGoal === "recomp" ? "recomp_maintenance" : "lean_bulk_standard",
+          target_gain_lbs_per_week: data.targetGainRateLbsPerWeek,
+          base_tdee: baseTdee,
+          smoothed_tdee: baseTdee,
+          target_calories: macroTargets.calories,
+          target_protein_g: macroTargets.proteinGrams,
+          target_carb_g: macroTargets.carbGrams,
+          target_fat_g: macroTargets.fatGrams,
+        });
+      } catch (e) {
+        console.warn("Supabase profile sync skipped (local-first active):", e);
+      }
     }
 
     setProfile(newProfile);
@@ -317,6 +364,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         isLoading,
         isAuthenticated,
         hasCompletedOnboarding,
+        isConfigured: isSupabaseConfigured,
         signInWithGoogle,
         signInWithEmail,
         signOut,

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import {
   Flame,
@@ -12,13 +12,28 @@ import {
   Loader2,
   CheckCircle2,
   AlertCircle,
+  Key,
 } from "lucide-react";
 
 export function AuthScreen() {
-  const { signInWithGoogle, signInWithEmail } = useAuth();
+  const { signInWithGoogle, signInWithEmail, isConfigured } = useAuth();
   const [email, setEmail] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ text: string; isError?: boolean } | null>(null);
+
+  useEffect(() => {
+    // Check for query parameter errors returned from /auth/callback
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const authError = params.get("auth_error");
+      if (authError) {
+        setStatusMessage({
+          text: `Authentication error: ${decodeURIComponent(authError)}`,
+          isError: true,
+        });
+      }
+    }
+  }, []);
 
   const handleGoogleSignIn = async () => {
     setIsSubmitting(true);
@@ -59,7 +74,7 @@ export function AuthScreen() {
       <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-brand-cyan/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-1/4 left-1/3 w-80 h-80 bg-brand-emerald/10 rounded-full blur-3xl pointer-events-none" />
 
-      <div className="w-full max-w-md relative z-10 space-y-8">
+      <div className="w-full max-w-md relative z-10 space-y-6">
         {/* Brand Header */}
         <div className="text-center space-y-3">
           <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-brand-cyan to-brand-emerald text-black font-black text-2xl shadow-xl shadow-brand-cyan/20">
@@ -95,30 +110,45 @@ export function AuthScreen() {
           </div>
         </div>
 
+        {/* Configuration Notice (if keys not yet supplied) */}
+        {!isConfigured && (
+          <div className="p-4 rounded-2xl bg-brand-amber/10 border border-brand-amber/30 text-brand-amber text-xs space-y-1">
+            <div className="flex items-center space-x-1.5 font-bold">
+              <Key className="w-4 h-4 flex-shrink-0" />
+              <span>Supabase Configuration Required</span>
+            </div>
+            <p className="text-[11px] text-gray-300 leading-relaxed">
+              Add <code className="text-white font-mono bg-black/40 px-1 py-0.5 rounded">NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
+              <code className="text-white font-mono bg-black/40 px-1 py-0.5 rounded">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> to your{" "}
+              <code className="text-white font-mono bg-black/40 px-1 py-0.5 rounded">.env.local</code> and Vercel Environment Variables.
+            </p>
+          </div>
+        )}
+
         {/* Auth Action Container */}
         <div className="p-8 rounded-3xl bg-surface border border-surface-border shadow-2xl space-y-6">
           <div className="text-center">
-            <h2 className="text-base font-bold text-white">Create Your Account</h2>
+            <h2 className="text-base font-bold text-white">Sign In to Continue</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Establish your personal profile and start with a clean slate.
+              Authenticate to initialize your isolated profile and database.
             </p>
           </div>
 
           {/* Status Message */}
           {statusMessage && (
             <div
-              className={`p-3 rounded-2xl flex items-center space-x-2 text-xs border ${
+              className={`p-3.5 rounded-2xl flex items-start space-x-2 text-xs border ${
                 statusMessage.isError
                   ? "bg-brand-rose/10 border-brand-rose/30 text-brand-rose"
                   : "bg-brand-emerald/10 border-brand-emerald/30 text-brand-emerald"
               }`}
             >
               {statusMessage.isError ? (
-                <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
               ) : (
-                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                <CheckCircle2 className="w-4 h-4 flex-shrink-0 mt-0.5" />
               )}
-              <span>{statusMessage.text}</span>
+              <span className="leading-tight">{statusMessage.text}</span>
             </div>
           )}
 
@@ -185,9 +215,8 @@ export function AuthScreen() {
             </button>
           </form>
 
-          {/* Security & Zero-Clutter Assurance Footnote */}
           <p className="text-[11px] text-gray-500 text-center leading-relaxed">
-            Your data is local-first and encrypted. No fake demo data or clutter will be created.
+            Selecting Google triggers the real Google Account selector with <code className="text-gray-400 font-mono">prompt=select_account</code>.
           </p>
         </div>
       </div>

@@ -1,17 +1,10 @@
-import { createClient } from "@supabase/supabase-js";
+import { createBrowserSupabaseClient } from "./supabase/client";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://placeholder.supabase.co";
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "placeholder-key";
-
-export const isSupabaseConfigured = 
-  Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL) && 
+export const isSupabaseConfigured =
+  Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL) &&
   Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) &&
   !process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("placeholder");
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-  },
-});
+export const supabase = createBrowserSupabaseClient();
+
+export { createBrowserSupabaseClient } from "./supabase/client";
