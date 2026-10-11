@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import { useAuth } from "@/context/AuthContext";
 import { db, LocalExercise, LocalWorkout, LocalWorkoutSet } from "@/lib/db";
 import {
   Dumbbell,
@@ -11,8 +12,7 @@ import {
   Pause,
   RotateCcw,
   Plus,
-  Flame,
-  ChevronDown,
+  Sparkles,
 } from "lucide-react";
 
 interface ActiveSetState {
@@ -20,8 +20,8 @@ interface ActiveSetState {
   setNumber: number;
   weightLbs: number;
   reps: number;
-  prevWeightLbs: number;
-  prevReps: number;
+  prevWeightLbs: number | null;
+  prevReps: number | null;
   completed: boolean;
   isPr: boolean;
 }
@@ -35,8 +35,9 @@ interface ActiveExerciseState {
 }
 
 export default function LiftTrackerPage() {
+  const { user, profile } = useAuth();
   const [exercises, setExercises] = useState<LocalExercise[]>([]);
-  const [routineName, setRoutineName] = useState<string>("Push Day A (Hypertrophy)");
+  const [routineName, setRoutineName] = useState<string>("Workout Session");
   const [activeExercises, setActiveExercises] = useState<ActiveExerciseState[]>([]);
   const [prCelebration, setPrCelebration] = useState<string | null>(null);
 
@@ -45,64 +46,71 @@ export default function LiftTrackerPage() {
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Load exercises from local DB & build workout session
   useEffect(() => {
     const initWorkout = async () => {
+      if (!user) return;
       const allExercises = await db.exercises.toArray();
       setExercises(allExercises);
 
-      // Select Push Day exercises as default
-      const pushExercises = allExercises.filter(
-        (ex) => ex.muscleGroup === "chest" || ex.muscleGroup === "shoulders" || ex.muscleGroup === "triceps"
-      );
+      // Determine exercises matching user's selected split
+      let selected: LocalExercise[] = [];
+      let name = "Custom Workout";
 
-      const samplePreviousBenchmarks: Record<string, { weight: number; reps: number }> = {
-        "ex-1": { weight: 185, reps: 8 },
-        "ex-2": { weight: 75, reps: 9 },
-        "ex-5": { weight: 115, reps: 7 },
-        "ex-8": { weight: 25, reps: 14 },
-        "ex-10": { weight: 45, reps: 12 },
-      };
+      const split = profile?.trainingSplit || "ppl";
+      if (split === "ppl") {
+        name = "Push Day A (Chest & Triceps Hypertrophy)";
+        selected = allExercises.filter(
+          (ex) => ex.muscleGroup === "chest" || ex.muscleGroup === "shoulders" || ex.muscleGroup === "triceps"
+        );
+      } else if (split === "upper_lower") {
+        name = "Upper Body A (Chest, Back, Shoulders)";
+        selected = allExercises.filter(
+          (ex) => ex.muscleGroup === "chest" || ex.muscleGroup === "back" || ex.muscleGroup === "shoulders"
+        );
+      } else if (split === "full_body") {
+        name = "Full Body A (Squat, Press, Row)";
+        selected = allExercises.filter(
+          (ex) => ex.id === "ex-3" || ex.id === "ex-1" || ex.id === "ex-7" || ex.id === "ex-8"
+        );
+      } else {
+        name = "Custom / Blank Routine";
+        selected = allExercises.slice(0, 3);
+      }
 
-      const workoutSessionExercises: ActiveExerciseState[] = pushExercises.slice(0, 4).map((ex) => {
-        const prev = samplePreviousBenchmarks[ex.id] || { weight: 135, reps: 8 };
+      setRoutineName(name);
+
+      // Fetch real user history for previous benchmarks (ZERO FAKE SEEDING)
+      const previousSets = await db.workoutSets
+        .where("userId")
+        .equals(user.id)
+        .toArray();
+
+      const workoutSessionExercises: ActiveExerciseState[] = selected.slice(0, 4).map((ex) => {
+        // Find user's best set from prior workouts
+        const priorSetsForEx = previousSets
+          .filter((s) => s.exerciseId === ex.id && !s.isWarmup)
+          .sort((a, b) => b.weightLbs - a.weightLbs);
+
+        const bestPrior = priorSetsForEx[0] || null;
+
+        const defaultWeight = bestPrior ? bestPrior.weightLbs : 0;
+        const defaultReps = bestPrior ? bestPrior.reps : 8;
+
         return {
           exercise: ex,
           targetSets: 3,
           targetReps: ex.isCompound ? "6-10" : "10-15",
           restSeconds: ex.defaultRestSeconds,
-          sets: [
-            {
-              id: `${ex.id}-s1`,
-              setNumber: 1,
-              weightLbs: prev.weight,
-              reps: prev.reps,
-              prevWeightLbs: prev.weight,
-              prevReps: prev.reps,
-              completed: false,
-              isPr: false,
-            },
-            {
-              id: `${ex.id}-s2`,
-              setNumber: 2,
-              weightLbs: prev.weight,
-              reps: Math.max(1, prev.reps - 1),
-              prevWeightLbs: prev.weight,
-              prevReps: Math.max(1, prev.reps - 1),
-              completed: false,
-              isPr: false,
-            },
-            {
-              id: `${ex.id}-s3`,
-              setNumber: 3,
-              weightLbs: prev.weight,
-              reps: Math.max(1, prev.reps - 2),
-              prevWeightLbs: prev.weight,
-              prevReps: Math.max(1, prev.reps - 2),
-              completed: false,
-              isPr: false,
-            },
-          ],
+          sets: [1, 2, 3].map((setNum) => ({
+            id: `${ex.id}-s${setNum}`,
+            setNumber: setNum,
+            weightLbs: defaultWeight,
+            reps: defaultReps,
+            prevWeightLbs: bestPrior ? bestPrior.weightLbs : null,
+            prevReps: bestPrior ? bestPrior.reps : null,
+            completed: false,
+            isPr: false,
+          })),
         };
       });
 
@@ -110,7 +118,7 @@ export default function LiftTrackerPage() {
     };
 
     initWorkout();
-  }, []);
+  }, [user, profile]);
 
   // Timer Tick Effect
   useEffect(() => {
@@ -137,7 +145,6 @@ export default function LiftTrackerPage() {
   // Audio & Haptic alert
   const triggerTimerChimeAndHaptic = () => {
     try {
-      // Web Audio API gentle synth chime
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
@@ -150,7 +157,6 @@ export default function LiftTrackerPage() {
       osc.start();
       osc.stop(audioCtx.currentTime + 0.6);
 
-      // Navigator Vibrate for subtle mobile haptic
       if (typeof navigator !== "undefined" && navigator.vibrate) {
         navigator.vibrate([100, 60, 120]);
       }
@@ -160,7 +166,8 @@ export default function LiftTrackerPage() {
   };
 
   // Toggle Set Complete & Check for PR
-  const handleToggleSet = (exIndex: number, setIndex: number) => {
+  const handleToggleSet = async (exIndex: number, setIndex: number) => {
+    if (!user) return;
     const nextExercises = [...activeExercises];
     const targetSet = nextExercises[exIndex].sets[setIndex];
     const wasCompleted = targetSet.completed;
@@ -168,23 +175,40 @@ export default function LiftTrackerPage() {
     targetSet.completed = !wasCompleted;
 
     if (!wasCompleted) {
-      // Check PR condition: higher weight OR higher reps than previous session benchmark
-      const isWeightPr = targetSet.weightLbs > targetSet.prevWeightLbs;
-      const isRepPr =
-        targetSet.weightLbs === targetSet.prevWeightLbs && targetSet.reps > targetSet.prevReps;
+      // Check PR condition if prior benchmarks exist
+      if (targetSet.prevWeightLbs !== null && targetSet.prevReps !== null) {
+        const isWeightPr = targetSet.weightLbs > targetSet.prevWeightLbs;
+        const isRepPr =
+          targetSet.weightLbs === targetSet.prevWeightLbs && targetSet.reps > targetSet.prevReps;
 
-      if (isWeightPr || isRepPr) {
-        targetSet.isPr = true;
-        const prMsg = isWeightPr
-          ? `🔥 NEW WEIGHT PR! +${targetSet.weightLbs - targetSet.prevWeightLbs} lbs on ${
-              nextExercises[exIndex].exercise.name
-            }`
-          : `⚡ NEW REP PR! +${targetSet.reps - targetSet.prevReps} reps on ${
-              nextExercises[exIndex].exercise.name
-            }`;
-        setPrCelebration(prMsg);
-        setTimeout(() => setPrCelebration(null), 4000);
+        if (isWeightPr || isRepPr) {
+          targetSet.isPr = true;
+          const prMsg = isWeightPr
+            ? `🔥 NEW WEIGHT PR! +${targetSet.weightLbs - targetSet.prevWeightLbs} lbs on ${
+                nextExercises[exIndex].exercise.name
+              }`
+            : `⚡ NEW REP PR! +${targetSet.reps - targetSet.prevReps} reps on ${
+                nextExercises[exIndex].exercise.name
+              }`;
+          setPrCelebration(prMsg);
+          setTimeout(() => setPrCelebration(null), 4000);
+        }
       }
+
+      // Save real set to Dexie
+      const workoutSetRecord: LocalWorkoutSet = {
+        id: `set-${user.id}-${Date.now()}-${targetSet.setNumber}`,
+        userId: user.id,
+        workoutId: `session-${new Date().toISOString().split("T")[0]}`,
+        exerciseId: nextExercises[exIndex].exercise.id,
+        setNumber: targetSet.setNumber,
+        weightLbs: targetSet.weightLbs,
+        reps: targetSet.reps,
+        isWarmup: false,
+        isPr: targetSet.isPr,
+        synced: false,
+      };
+      await db.workoutSets.put(workoutSetRecord);
 
       // Auto-start rest timer
       setRestSecondsRemaining(nextExercises[exIndex].restSeconds);
@@ -202,11 +226,10 @@ export default function LiftTrackerPage() {
   ) => {
     const next = [...activeExercises];
     const current = next[exIndex].sets[setIndex][field];
-    next[exIndex].sets[setIndex][field] = Math.max(1, current + delta);
+    next[exIndex].sets[setIndex][field] = Math.max(0, current + delta);
     setActiveExercises(next);
   };
 
-  // Format rest timer MM:SS
   const formatTimer = (seconds: number) => {
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
@@ -231,7 +254,7 @@ export default function LiftTrackerPage() {
           </span>
           <h2 className="text-2xl font-bold text-white mt-0.5">{routineName}</h2>
           <p className="text-xs text-gray-400 mt-1">
-            Inline previous weights displayed for zero-hesitation target setting.
+            Zero mock numbers. Set your Day 1 weights to establish your progressive overload baselines.
           </p>
         </div>
 
@@ -290,12 +313,12 @@ export default function LiftTrackerPage() {
               </div>
             </div>
 
-            {/* Set Table with Inline Previous Session Benchmarks */}
+            {/* Set Table */}
             <div className="divide-y divide-surface-border/60">
               {/* Header */}
               <div className="grid grid-cols-12 text-[10px] font-mono uppercase text-gray-400 pb-2 px-2">
                 <div className="col-span-2">Set</div>
-                <div className="col-span-4">Prev Session</div>
+                <div className="col-span-4">Previous Target</div>
                 <div className="col-span-3 text-center">Weight</div>
                 <div className="col-span-2 text-center">Reps</div>
                 <div className="col-span-1 text-right">Done</div>
@@ -319,9 +342,13 @@ export default function LiftTrackerPage() {
                     )}
                   </div>
 
-                  {/* Previous Benchmark Ghost Label */}
+                  {/* Previous Benchmark Label */}
                   <div className="col-span-4 text-xs font-mono text-gray-400">
-                    {set.prevWeightLbs} lbs × {set.prevReps}
+                    {set.prevWeightLbs !== null && set.prevReps !== null ? (
+                      `${set.prevWeightLbs} lbs × ${set.prevReps}`
+                    ) : (
+                      <span className="text-gray-500 italic">None (Day 1)</span>
+                    )}
                   </div>
 
                   {/* Weight Stepper */}
@@ -332,9 +359,17 @@ export default function LiftTrackerPage() {
                     >
                       -
                     </button>
-                    <span className="text-xs font-bold text-white w-9 text-center">
-                      {set.weightLbs}
-                    </span>
+                    <input
+                      type="number"
+                      value={set.weightLbs || ""}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const next = [...activeExercises];
+                        next[exIndex].sets[setIndex].weightLbs = parseFloat(e.target.value) || 0;
+                        setActiveExercises(next);
+                      }}
+                      className="text-xs font-bold text-white w-12 text-center bg-transparent focus:outline-none"
+                    />
                     <button
                       onClick={() => handleUpdateSetValue(exIndex, setIndex, "weightLbs", 5)}
                       className="w-6 h-6 rounded bg-surface-elevated text-xs text-gray-400 hover:text-white flex items-center justify-center"
@@ -351,7 +386,17 @@ export default function LiftTrackerPage() {
                     >
                       -
                     </button>
-                    <span className="text-xs font-bold text-white w-6 text-center">{set.reps}</span>
+                    <input
+                      type="number"
+                      value={set.reps || ""}
+                      placeholder="0"
+                      onChange={(e) => {
+                        const next = [...activeExercises];
+                        next[exIndex].sets[setIndex].reps = parseInt(e.target.value) || 0;
+                        setActiveExercises(next);
+                      }}
+                      className="text-xs font-bold text-white w-8 text-center bg-transparent focus:outline-none"
+                    />
                     <button
                       onClick={() => handleUpdateSetValue(exIndex, setIndex, "reps", 1)}
                       className="w-6 h-6 rounded bg-surface-elevated text-xs text-gray-400 hover:text-white flex items-center justify-center"

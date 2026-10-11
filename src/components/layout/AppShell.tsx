@@ -11,9 +11,14 @@ import {
   Wifi,
   WifiOff,
   Flame,
-  PlusCircle,
+  LogOut,
+  User,
+  Loader2,
 } from "lucide-react";
-import { db, initializeDefaultLocalData } from "@/lib/db";
+import { useAuth } from "@/context/AuthContext";
+import { AuthScreen } from "@/components/auth/AuthScreen";
+import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
+import { db } from "@/lib/db";
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -27,17 +32,12 @@ const NAV_ITEMS = [
 ];
 
 export function AppShell({ children }: AppShellProps) {
+  const { user, profile, isLoading, isAuthenticated, hasCompletedOnboarding, signOut } = useAuth();
   const pathname = usePathname();
   const [isOnline, setIsOnline] = useState<boolean>(true);
   const [pendingSyncs, setPendingSyncs] = useState<number>(0);
-  const [isMounted, setIsMounted] = useState<boolean>(false);
 
   useEffect(() => {
-    setIsMounted(true);
-    // Initialize default IndexedDB data
-    initializeDefaultLocalData();
-
-    // Online/Offline detection
     setIsOnline(navigator.onLine);
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -45,7 +45,6 @@ export function AppShell({ children }: AppShellProps) {
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
 
-    // Check pending sync items periodically
     const checkSyncQueue = async () => {
       try {
         const count = await db.syncQueue.where("status").equals("pending").count();
@@ -64,10 +63,36 @@ export function AppShell({ children }: AppShellProps) {
     };
   }, []);
 
+  // 1. Loading State
+  if (isLoading) {
+    return (
+      <div className="h-screen w-screen flex flex-col items-center justify-center bg-background text-white">
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-brand-cyan to-brand-emerald flex items-center justify-center font-black text-black text-xl mb-4 shadow-xl shadow-brand-cyan/20 animate-pulse">
+          R
+        </div>
+        <Loader2 className="w-6 h-6 animate-spin text-brand-cyan" />
+        <span className="text-xs font-mono text-gray-400 mt-3 uppercase tracking-wider">
+          Initializing Rebound Engine...
+        </span>
+      </div>
+    );
+  }
+
+  // 2. Authentication Gate: If not logged in, block dashboard and show AuthScreen
+  if (!isAuthenticated) {
+    return <AuthScreen />;
+  }
+
+  // 3. Guided Onboarding Gate: If logged in but onboarding not completed, show wizard
+  if (!hasCompletedOnboarding) {
+    return <OnboardingWizard />;
+  }
+
+  // 4. Authenticated & Onboarded Main Application Shell
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-background text-white antialiased font-sans">
       {/* =========================================================================
-          DESKTOP SIDEBAR NAVIGATION (Hidden on mobile, visible on md: screens)
+          DESKTOP SIDEBAR NAVIGATION
           ========================================================================= */}
       <aside className="hidden md:flex flex-col w-64 border-r border-surface-border bg-surface flex-shrink-0">
         {/* Brand Header */}
@@ -81,7 +106,7 @@ export function AppShell({ children }: AppShellProps) {
                 ReboundFit
               </h1>
               <p className="text-[11px] font-mono text-brand-cyan uppercase tracking-wider">
-                Lean Bulk Engine
+                {profile?.primaryGoal === "recomp" ? "Body Recomposition" : "Lean Bulk Engine"}
               </p>
             </div>
           </div>
@@ -94,7 +119,7 @@ export function AppShell({ children }: AppShellProps) {
               {isOnline ? (
                 <>
                   <Wifi className="w-3.5 h-3.5 text-brand-emerald" />
-                  <span className="text-gray-300">Local-First (Synced)</span>
+                  <span className="text-gray-300">Local-First (Online)</span>
                 </>
               ) : (
                 <>
@@ -139,15 +164,41 @@ export function AppShell({ children }: AppShellProps) {
             <Flame className="w-3.5 h-3.5" />
             <span>Target Surplus Active</span>
           </div>
-          <div className="text-sm font-bold text-white">+0.35 lbs/week</div>
-          <div className="text-[11px] text-gray-400 mt-1">
-            Target: 2,925 kcal | 175g Protein
+          <div className="text-sm font-bold text-white">
+            {profile?.targetGainRateLbsPerWeek ? `+${profile.targetGainRateLbsPerWeek} lbs/week` : "Maintenance"}
           </div>
+          <div className="text-[11px] text-gray-400 mt-1 font-mono">
+            Target: {profile?.targetCalories || 0} kcal | {profile?.targetProteinG || 0}g Pro
+          </div>
+        </div>
+
+        {/* User Account / Sign Out Row */}
+        <div className="p-4 border-t border-surface-border flex items-center justify-between">
+          <div className="flex items-center space-x-2.5 min-w-0">
+            <div className="w-7 h-7 rounded-full bg-surface-elevated border border-surface-border flex items-center justify-center text-xs font-bold text-gray-300 flex-shrink-0">
+              <User className="w-3.5 h-3.5" />
+            </div>
+            <div className="truncate">
+              <div className="text-xs font-semibold text-white truncate">
+                {user?.name || "Athlete"}
+              </div>
+              <div className="text-[10px] text-gray-500 font-mono truncate">
+                {user?.email || ""}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => signOut()}
+            className="p-1.5 rounded-lg text-gray-400 hover:text-brand-rose hover:bg-surface-elevated transition-colors"
+            title="Sign Out"
+          >
+            <LogOut className="w-4 h-4" />
+          </button>
         </div>
       </aside>
 
       {/* =========================================================================
-          MAIN CONTENT AREA (Scrollable, full-height)
+          MAIN CONTENT AREA
           ========================================================================= */}
       <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
         {/* Mobile Top Header */}
@@ -169,6 +220,14 @@ export function AppShell({ children }: AppShellProps) {
             >
               {isOnline ? "ONLINE" : "OFFLINE"}
             </span>
+
+            <button
+              onClick={() => signOut()}
+              className="p-1.5 rounded-lg text-gray-400 hover:text-brand-rose"
+              title="Sign Out"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
           </div>
         </header>
 
@@ -178,7 +237,7 @@ export function AppShell({ children }: AppShellProps) {
         </main>
 
         {/* =========================================================================
-            MOBILE NATIVE BOTTOM NAVIGATION (Fixed at bottom on mobile)
+            MOBILE NATIVE BOTTOM NAVIGATION
             ========================================================================= */}
         <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-surface/95 backdrop-blur-xl border-t border-surface-border pb-safe z-50">
           <div className="flex items-center justify-around py-2">

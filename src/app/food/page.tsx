@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { db, LocalMealLog, LocalProfile } from "@/lib/db";
+import { useAuth } from "@/context/AuthContext";
+import { db, LocalMealLog } from "@/lib/db";
 import {
   UtensilsCrossed,
   Flame,
@@ -12,8 +13,7 @@ import {
   Search,
   Sparkles,
   Bookmark,
-  ChevronRight,
-  Clock,
+  Calendar,
 } from "lucide-react";
 
 const BULK_STAPLES = [
@@ -58,15 +58,15 @@ const MEAL_TEMPLATES = [
 ];
 
 export default function FoodTrackerPage() {
-  const [profile, setProfile] = useState<LocalProfile | null>(null);
+  const { user, profile } = useAuth();
   const [meals, setMeals] = useState<LocalMealLog[]>([]);
   const [activeTab, setActiveTab] = useState<"quick_dial" | "staples" | "templates">("quick_dial");
 
   // Quick Dial Form State
-  const [quickCalories, setQuickCalories] = useState<number>(650);
-  const [quickProtein, setQuickProtein] = useState<number>(45);
-  const [quickName, setQuickName] = useState<string>("Afternoon Bulk Snack");
-  const [quickMealType, setQuickMealType] = useState<LocalMealLog["mealType"]>("snack");
+  const [quickCalories, setQuickCalories] = useState<number>(500);
+  const [quickProtein, setQuickProtein] = useState<number>(40);
+  const [quickName, setQuickName] = useState<string>("");
+  const [quickMealType, setQuickMealType] = useState<LocalMealLog["mealType"]>("lunch");
 
   // Search State
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -74,32 +74,36 @@ export default function FoodTrackerPage() {
   const today = new Date().toISOString().split("T")[0];
 
   const loadMeals = async () => {
-    const userProfile = await db.profiles.toCollection().first();
-    if (userProfile) setProfile(userProfile);
-
-    const todayMeals = await db.mealLogs.where("date").equals(today).toArray();
+    if (!user) return;
+    const todayMeals = await db.mealLogs
+      .where("userId")
+      .equals(user.id)
+      .and((m) => m.date === today)
+      .toArray();
     setMeals(todayMeals);
   };
 
   useEffect(() => {
     loadMeals();
-  }, []);
+  }, [user]);
 
   const totalCalories = meals.reduce((sum, m) => sum + m.calories, 0);
   const totalProtein = meals.reduce((sum, m) => sum + m.proteinG, 0);
   const totalCarbs = meals.reduce((sum, m) => sum + m.carbG, 0);
   const totalFat = meals.reduce((sum, m) => sum + m.fatG, 0);
 
-  const targetCalories = profile?.targetCalories || 2925;
-  const targetProtein = profile?.targetProteinG || 167;
+  const targetCalories = profile?.targetCalories || 2600;
+  const targetProtein = profile?.targetProteinG || 160;
 
   // 1-Tap Quick Dial Commit
   const handleLogQuickDial = async () => {
+    if (!user) return;
     const newEntry: LocalMealLog = {
-      id: `meal-${Date.now()}`,
+      id: `meal-${user.id}-${Date.now()}`,
+      userId: user.id,
       date: today,
       mealType: quickMealType,
-      name: quickName || "Quick Calorie Dial",
+      name: quickName.trim() || `Quick ${quickMealType.replace("_", " ")}`,
       calories: quickCalories,
       proteinG: quickProtein,
       carbG: Math.max(0, Math.round((quickCalories - quickProtein * 4 - 15 * 9) / 4)),
@@ -110,13 +114,16 @@ export default function FoodTrackerPage() {
     };
 
     await db.mealLogs.put(newEntry);
+    setQuickName("");
     await loadMeals();
   };
 
   // Add bulk staple directly
   const handleAddStaple = async (staple: (typeof BULK_STAPLES)[0]) => {
+    if (!user) return;
     const newEntry: LocalMealLog = {
-      id: `meal-${Date.now()}`,
+      id: `meal-${user.id}-${Date.now()}`,
+      userId: user.id,
       date: today,
       mealType: "lunch",
       name: staple.name,
@@ -135,8 +142,10 @@ export default function FoodTrackerPage() {
 
   // Add template directly
   const handleAddTemplate = async (tmpl: (typeof MEAL_TEMPLATES)[0]) => {
+    if (!user) return;
     const newEntry: LocalMealLog = {
-      id: `meal-${Date.now()}`,
+      id: `meal-${user.id}-${Date.now()}`,
+      userId: user.id,
       date: today,
       mealType: tmpl.mealType,
       name: tmpl.name,
@@ -216,14 +225,14 @@ export default function FoodTrackerPage() {
           <div className="p-3 rounded-2xl bg-surface-elevated border border-surface-border/50">
             <div className="text-xs text-gray-400">Carbohydrates</div>
             <div className="text-sm font-bold font-mono text-white mt-1">
-              {totalCarbs}g / {profile?.targetCarbG || 390}g
+              {totalCarbs}g / {profile?.targetCarbG || 320}g
             </div>
           </div>
 
           <div className="p-3 rounded-2xl bg-surface-elevated border border-surface-border/50">
             <div className="text-xs text-gray-400">Healthy Fats</div>
             <div className="text-sm font-bold font-mono text-white mt-1">
-              {totalFat}g / {profile?.targetFatG || 81}g
+              {totalFat}g / {profile?.targetFatG || 70}g
             </div>
           </div>
         </div>
@@ -278,7 +287,7 @@ export default function FoodTrackerPage() {
           <div>
             <h3 className="text-lg font-bold text-white">Log in 3 Seconds</h3>
             <p className="text-xs text-gray-400">
-              Already know your numbers? Skip search and log directly.
+              Already know your numbers? Skip searching and log directly.
             </p>
           </div>
 
@@ -342,7 +351,7 @@ export default function FoodTrackerPage() {
                 type="text"
                 value={quickName}
                 onChange={(e) => setQuickName(e.target.value)}
-                placeholder="e.g., Post-Workout Bulk Shake"
+                placeholder="e.g., Post-Workout Shake"
                 className="w-full px-4 py-2.5 rounded-xl bg-surface-elevated border border-surface-border text-sm text-white focus:outline-none focus:border-brand-cyan"
               />
             </div>
@@ -448,7 +457,7 @@ export default function FoodTrackerPage() {
       )}
 
       {/* =========================================================================
-          TODAY'S LOGGED MEALS TIMELINE
+          TODAY'S LOGGED MEALS TIMELINE (CLEAN EMPTY STATE)
           ========================================================================= */}
       <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl space-y-4">
         <h3 className="text-lg font-bold text-white flex items-center space-x-2">
@@ -459,9 +468,13 @@ export default function FoodTrackerPage() {
         </h3>
 
         {meals.length === 0 ? (
-          <p className="text-xs text-gray-500 py-4 text-center">
-            No meals logged today yet. Use the dial above to add your first meal.
-          </p>
+          <div className="p-8 rounded-2xl bg-surface-elevated/40 border border-dashed border-surface-border text-center space-y-2">
+            <UtensilsCrossed className="w-8 h-8 text-gray-500 mx-auto mb-1" />
+            <h4 className="text-sm font-bold text-white">No Meals Logged Today</h4>
+            <p className="text-xs text-gray-400 max-w-sm mx-auto">
+              Ready for your first meal? Use the Quick Dial above or choose a staple to start tracking your daily calories.
+            </p>
+          </div>
         ) : (
           <div className="space-y-3">
             {meals.map((meal) => (

@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { X, Scale, Check, Plus, Minus } from "lucide-react";
 import { db } from "@/lib/db";
+import { useAuth } from "@/context/AuthContext";
 import { calculateWeightTrend } from "@/algorithms/weightTrend";
 
 interface QuickWeighInModalProps {
@@ -18,6 +19,7 @@ export function QuickWeighInModal({
   lastWeightLbs,
   onWeightLogged,
 }: QuickWeighInModalProps) {
+  const { user } = useAuth();
   const [weight, setWeight] = useState<number>(lastWeightLbs || 175.0);
   const [unit, setUnit] = useState<"lbs" | "kg">("lbs");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
@@ -29,18 +31,20 @@ export function QuickWeighInModal({
   };
 
   const handleSave = async () => {
+    if (!user) return;
     setIsSubmitting(true);
     try {
       const today = new Date().toISOString().split("T")[0];
       const weightLbs = unit === "lbs" ? weight : Number((weight / 0.45359237).toFixed(1));
       const weightKg = unit === "kg" ? weight : Number((weight * 0.45359237).toFixed(1));
 
-      // 1. Fetch historical weigh-ins to update EMA
-      const existing = await db.weighIns.toArray();
+      // 1. Fetch user's historical weigh-ins to update EMA
+      const existing = await db.weighIns.where("userId").equals(user.id).toArray();
       const updatedList = [
         ...existing.filter((w) => w.date !== today),
         {
-          id: `weigh-${today}`,
+          id: `weigh-${user.id}-${today}`,
+          userId: user.id,
           date: today,
           rawWeightLbs: weightLbs,
           rawWeightKg: weightKg,
@@ -57,7 +61,8 @@ export function QuickWeighInModal({
 
       // 3. Save to local IndexedDB
       await db.weighIns.put({
-        id: `weigh-${today}`,
+        id: `weigh-${user.id}-${today}`,
+        userId: user.id,
         date: today,
         rawWeightLbs: weightLbs,
         rawWeightKg: weightKg,
@@ -68,7 +73,7 @@ export function QuickWeighInModal({
       });
 
       // 4. Update profile current weight
-      const profile = await db.profiles.toCollection().first();
+      const profile = await db.profiles.where("userId").equals(user.id).first();
       if (profile) {
         await db.profiles.update(profile.id, {
           currentWeightLbs: weightLbs,
@@ -110,7 +115,7 @@ export function QuickWeighInModal({
           <button
             onClick={() => setUnit("lbs")}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              unit === "lbs" ? "bg-brand-cyan text-black" : "text-gray-400 hover:text-white"
+              unit === "lbs" ? "bg-brand-cyan text-black font-bold" : "text-gray-400 hover:text-white"
             }`}
           >
             LBS (Pounds)
@@ -118,7 +123,7 @@ export function QuickWeighInModal({
           <button
             onClick={() => setUnit("kg")}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-lg transition-all ${
-              unit === "kg" ? "bg-brand-cyan text-black" : "text-gray-400 hover:text-white"
+              unit === "kg" ? "bg-brand-cyan text-black font-bold" : "text-gray-400 hover:text-white"
             }`}
           >
             KG (Kilograms)
