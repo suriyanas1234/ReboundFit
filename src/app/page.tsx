@@ -4,7 +4,8 @@ import React, { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
 import { useCloudSync } from "@/hooks/useCloudSync";
-import { db, LocalWeighIn, LocalMealLog, LocalScheduledWorkout } from "@/lib/db";
+import { db, LocalWeighIn, LocalMealLog, LocalScheduledWorkout, LocalHealthMetric } from "@/lib/db";
+import { supabase } from "@/lib/supabase";
 import { calculateWeightTrend, SmoothedWeightPoint } from "@/algorithms/weightTrend";
 import { getOrCreateScheduledWorkoutForDate } from "@/algorithms/workoutScheduler";
 import { QuickWeighInModal } from "@/components/dashboard/QuickWeighInModal";
@@ -14,6 +15,10 @@ import { WeightTrendCard } from "@/components/dashboard/WeightTrendCard";
 import { WorkoutCard } from "@/components/dashboard/WorkoutCard";
 import { WeightTrendChart } from "@/components/dashboard/WeightTrendChart";
 import { DualProgressRings } from "@/components/dashboard/DualProgressRings";
+import { StepCountCard } from "@/components/dashboard/StepCountCard";
+import { SleepAnalysisCard } from "@/components/dashboard/SleepAnalysisCard";
+import { TotalBurnCard } from "@/components/dashboard/TotalBurnCard";
+import { HeartRateCard } from "@/components/dashboard/HeartRateCard";
 import {
   Flame,
   Dumbbell,
@@ -23,6 +28,7 @@ import {
   Sparkles,
   TrendingUp,
   LayoutDashboard,
+  Activity,
 } from "lucide-react";
 
 export default function SummaryPage() {
@@ -32,6 +38,7 @@ export default function SummaryPage() {
   const [trendData, setTrendData] = useState<SmoothedWeightPoint[]>([]);
   const [todayMeals, setTodayMeals] = useState<LocalMealLog[]>([]);
   const [todayWorkout, setTodayWorkout] = useState<LocalScheduledWorkout | null>(null);
+  const [todayHealthMetric, setTodayHealthMetric] = useState<LocalHealthMetric | null>(null);
   const [isWeighInOpen, setIsWeighInOpen] = useState<boolean>(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -85,6 +92,58 @@ export default function SummaryPage() {
         profile?.customWeeklySchedule as any
       );
       setTodayWorkout(workout);
+
+      // 4. Fetch Apple Health Metrics (Local first, then remote check)
+      const localMetrics = await db.healthMetrics
+        .where("userId")
+        .equals(user.id)
+        .toArray();
+
+      const matchedToday = localMetrics.find((m) => m.date === todayStr);
+      if (matchedToday) {
+        setTodayHealthMetric(matchedToday);
+      } else if (localMetrics.length > 0) {
+        const sorted = [...localMetrics].sort((a, b) => b.date.localeCompare(a.date));
+        setTodayHealthMetric(sorted[0]);
+      }
+
+      // Check Supabase for recent webhook-synced metrics
+      try {
+        const { data: remoteMetric } = await supabase
+          .from("health_metrics")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (remoteMetric) {
+          const localItem: LocalHealthMetric = {
+            id: remoteMetric.id || `hm-${user.id}-${remoteMetric.date}`,
+            userId: user.id,
+            date: remoteMetric.date,
+            weightLbs: remoteMetric.weight_lbs ? Number(remoteMetric.weight_lbs) : undefined,
+            weightKg: remoteMetric.weight_kg ? Number(remoteMetric.weight_kg) : undefined,
+            activeEnergyBurnedKcal: remoteMetric.active_energy_burned_kcal ? Number(remoteMetric.active_energy_burned_kcal) : undefined,
+            basalEnergyBurnedKcal: remoteMetric.basal_energy_burned_kcal ? Number(remoteMetric.basal_energy_burned_kcal) : undefined,
+            totalEnergyBurnedKcal: remoteMetric.total_energy_burned_kcal ? Number(remoteMetric.total_energy_burned_kcal) : undefined,
+            stepCount: remoteMetric.step_count ? Number(remoteMetric.step_count) : undefined,
+            distanceKm: remoteMetric.distance_km ? Number(remoteMetric.distance_km) : undefined,
+            sleepHours: remoteMetric.sleep_hours ? Number(remoteMetric.sleep_hours) : undefined,
+            deepSleepHours: remoteMetric.deep_sleep_hours ? Number(remoteMetric.deep_sleep_hours) : undefined,
+            restingHeartRateBpm: remoteMetric.resting_heart_rate_bpm ? Number(remoteMetric.resting_heart_rate_bpm) : undefined,
+            source: remoteMetric.source || "apple_health",
+            rawPayload: remoteMetric.raw_payload,
+            synced: true,
+            createdAt: remoteMetric.created_at || new Date().toISOString(),
+            updatedAt: remoteMetric.updated_at || new Date().toISOString(),
+          };
+          await db.healthMetrics.put(localItem);
+          setTodayHealthMetric(localItem);
+        }
+      } catch {
+        // Continue with local data if offline
+      }
     } catch (err) {
       console.error("Failed to load Apple Health summary data:", err);
     } finally {
@@ -223,6 +282,64 @@ export default function SummaryPage() {
           <div className="md:col-span-2 lg:col-span-1">
             <WorkoutCard workout={todayWorkout} />
           </div>
+        </div>
+      </section>
+
+      {/* =========================================================================
+          APPLE HEALTH ACTIVITY & VITALS (HealthKit Synchronized Feed)
+          Daily Steps, Sleep Analysis, Total Energy Burn, and Resting Heart Rate
+          ========================================================================= */}
+      <section className="space-y-4 pt-1">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            <h2 className="text-lg sm:text-xl font-bold text-white tracking-tight">
+              Activity & Vitals
+            </h2>
+            <span className="px-2 py-0.5 rounded-full bg-[#30D158]/15 text-[10px] font-mono text-[#30D158] font-bold">
+              APPLE HEALTH
+            </span>
+          </div>
+
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="text-xs font-semibold text-[#0A84FF] hover:underline flex items-center space-x-1"
+          >
+            <span>Sync Setup</span>
+          </button>
+        </div>
+
+        {/* 4-Card Responsive Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-5">
+          {/* 1. Daily Steps & Distance */}
+          <StepCountCard
+            steps={todayHealthMetric?.stepCount}
+            distanceKm={todayHealthMetric?.distanceKm}
+            targetSteps={10000}
+            onOpenSyncGuide={() => setIsSettingsOpen(true)}
+          />
+
+          {/* 2. Sleep Analysis */}
+          <SleepAnalysisCard
+            sleepHours={todayHealthMetric?.sleepHours}
+            deepSleepHours={todayHealthMetric?.deepSleepHours}
+            onOpenSyncGuide={() => setIsSettingsOpen(true)}
+          />
+
+          {/* 3. Total Daily Burn (Active + Basal Energy) */}
+          <TotalBurnCard
+            totalBurnKcal={todayHealthMetric?.totalEnergyBurnedKcal}
+            activeBurnKcal={todayHealthMetric?.activeEnergyBurnedKcal}
+            basalBurnKcal={todayHealthMetric?.basalEnergyBurnedKcal || profile?.baseTdee}
+            consumedCalories={consumedCalories}
+            targetCalories={targetCalories}
+            onOpenSyncGuide={() => setIsSettingsOpen(true)}
+          />
+
+          {/* 4. Resting Heart Rate */}
+          <HeartRateCard
+            restingHeartRateBpm={todayHealthMetric?.restingHeartRateBpm}
+            onOpenSyncGuide={() => setIsSettingsOpen(true)}
+          />
         </div>
       </section>
 

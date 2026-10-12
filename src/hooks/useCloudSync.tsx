@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from "react";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
-import { db, LocalWeighIn, LocalMealLog, LocalWorkoutSet } from "@/lib/db";
+import { db, LocalWeighIn, LocalMealLog, LocalWorkoutSet, LocalHealthMetric } from "@/lib/db";
 import { useAuth } from "@/context/AuthContext";
 import { calculateWeightTrend } from "@/algorithms/weightTrend";
 
@@ -130,6 +130,44 @@ export function CloudSyncProvider({ children }: { children: React.ReactNode }) {
               createdAt: item.created_at || new Date().toISOString(),
             };
             await db.mealLogs.put(localMeal);
+          }
+        }
+      } catch {
+        // Table may not exist yet
+      }
+
+      // 3. Pull Health Metrics (Apple Health) from PostgreSQL
+      try {
+        const { data: remoteMetrics, error: metricsError } = await supabase
+          .from("health_metrics")
+          .select("*")
+          .eq("user_id", user.id)
+          .order("date", { ascending: false })
+          .limit(30);
+
+        if (!metricsError && Array.isArray(remoteMetrics) && remoteMetrics.length > 0) {
+          for (const item of remoteMetrics) {
+            const localMetric: LocalHealthMetric = {
+              id: item.id || `hm-${user.id}-${item.date}`,
+              userId: user.id,
+              date: item.date,
+              weightLbs: item.weight_lbs ? Number(item.weight_lbs) : undefined,
+              weightKg: item.weight_kg ? Number(item.weight_kg) : undefined,
+              activeEnergyBurnedKcal: item.active_energy_burned_kcal ? Number(item.active_energy_burned_kcal) : undefined,
+              basalEnergyBurnedKcal: item.basal_energy_burned_kcal ? Number(item.basal_energy_burned_kcal) : undefined,
+              totalEnergyBurnedKcal: item.total_energy_burned_kcal ? Number(item.total_energy_burned_kcal) : undefined,
+              stepCount: item.step_count ? Number(item.step_count) : undefined,
+              distanceKm: item.distance_km ? Number(item.distance_km) : undefined,
+              sleepHours: item.sleep_hours ? Number(item.sleep_hours) : undefined,
+              deepSleepHours: item.deep_sleep_hours ? Number(item.deep_sleep_hours) : undefined,
+              restingHeartRateBpm: item.resting_heart_rate_bpm ? Number(item.resting_heart_rate_bpm) : undefined,
+              source: item.source || "apple_health",
+              rawPayload: item.raw_payload,
+              synced: true,
+              createdAt: item.created_at || new Date().toISOString(),
+              updatedAt: item.updated_at || new Date().toISOString(),
+            };
+            await db.healthMetrics.put(localMetric);
           }
         }
       } catch {

@@ -32,6 +32,7 @@ export interface LocalProfile {
   targetProteinG: number;
   targetCarbG: number;
   targetFatG: number;
+  appleHealthSyncToken?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -146,6 +147,27 @@ export interface LocalSyncQueueItem {
   retryCount: number;
 }
 
+export interface LocalHealthMetric {
+  id: string; // `hm-${userId}-${date}`
+  userId: string;
+  date: string; // YYYY-MM-DD
+  weightLbs?: number;
+  weightKg?: number;
+  activeEnergyBurnedKcal?: number;
+  basalEnergyBurnedKcal?: number;
+  totalEnergyBurnedKcal?: number;
+  stepCount?: number;
+  distanceKm?: number;
+  sleepHours?: number;
+  deepSleepHours?: number;
+  restingHeartRateBpm?: number;
+  source?: string;
+  rawPayload?: any;
+  synced: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export class ReboundFitDatabase extends Dexie {
   profiles!: Table<LocalProfile, string>;
   weighIns!: Table<LocalWeighIn, string>;
@@ -156,6 +178,7 @@ export class ReboundFitDatabase extends Dexie {
   photos!: Table<LocalProgressPhoto, string>;
   syncQueue!: Table<LocalSyncQueueItem, string>;
   scheduledWorkouts!: Table<LocalScheduledWorkout, string>;
+  healthMetrics!: Table<LocalHealthMetric, string>;
 
   constructor() {
     super('ReboundFitLocalDB');
@@ -199,6 +222,18 @@ export class ReboundFitDatabase extends Dexie {
       photos: 'id, userId, date, weekNumber, isBaseline, synced',
       syncQueue: 'id, table, status, timestamp',
       scheduledWorkouts: 'id, userId, date, dayType, isCompleted',
+    });
+    this.version(5).stores({
+      profiles: 'id, userId, email, onboardingCompleted',
+      weighIns: 'id, userId, date, synced',
+      mealLogs: 'id, userId, date, mealType, synced',
+      exercises: 'id, muscleGroup, isCompound',
+      workouts: 'id, userId, startedAt, synced',
+      workoutSets: 'id, userId, workoutId, exerciseId, synced',
+      photos: 'id, userId, date, weekNumber, isBaseline, synced',
+      syncQueue: 'id, table, status, timestamp',
+      scheduledWorkouts: 'id, userId, date, dayType, isCompleted',
+      healthMetrics: 'id, userId, date, synced',
     });
   }
 }

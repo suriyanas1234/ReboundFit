@@ -32,6 +32,7 @@ export interface UserProfile {
   targetProteinG: number;
   targetCarbG: number;
   targetFatG: number;
+  appleHealthSyncToken?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -146,3 +147,24 @@ export interface ProgressPhoto {
   notes?: string;
   isBaseline: boolean;
 }
+
+export interface HealthMetricRecord {
+  id: string;
+  userId: string;
+  date: string; // YYYY-MM-DD
+  weightLbs?: number;
+  weightKg?: number;
+  activeEnergyBurnedKcal?: number;
+  basalEnergyBurnedKcal?: number;
+  totalEnergyBurnedKcal?: number;
+  stepCount?: number;
+  distanceKm?: number;
+  sleepHours?: number;
+  deepSleepHours?: number;
+  restingHeartRateBpm?: number;
+  source: string;
+  rawPayload?: any;
+  createdAt: string;
+  updatedAt: string;
+}
+

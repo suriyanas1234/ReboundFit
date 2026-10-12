@@ -425,3 +425,47 @@ INSERT INTO public.foods (name, brand, serving_size, serving_unit, calories, pro
 ('Banana (Medium)', 'Whole Food', 118, 'g', 105, 1.3, 27.0, 0.3, TRUE),
 ('Ground Beef 93/7 (Cooked)', 'Whole Food', 112, 'g', 170, 24.0, 0.0, 8.0, TRUE)
 ON CONFLICT DO NOTHING;
+
+-- ============================================================================
+-- 10. APPLE HEALTHKIT LIVE VITALS & METRICS
+-- ============================================================================
+
+ALTER TABLE public.profiles ADD COLUMN IF NOT EXISTS apple_health_sync_token TEXT;
+
+CREATE TABLE IF NOT EXISTS public.health_metrics (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    date DATE NOT NULL DEFAULT CURRENT_DATE,
+    
+    weight_lbs NUMERIC(5, 2),
+    weight_kg NUMERIC(5, 2),
+    active_energy_burned_kcal NUMERIC(6, 1),
+    basal_energy_burned_kcal NUMERIC(6, 1),
+    total_energy_burned_kcal NUMERIC(6, 1),
+    step_count INT,
+    distance_km NUMERIC(5, 2),
+    sleep_hours NUMERIC(4, 2),
+    deep_sleep_hours NUMERIC(4, 2),
+    resting_heart_rate_bpm INT,
+    
+    source TEXT NOT NULL DEFAULT 'apple_health',
+    raw_payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    
+    CONSTRAINT uq_user_health_metrics_date UNIQUE (user_id, date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_health_metrics_user_date ON public.health_metrics(user_id, date DESC);
+
+ALTER TABLE public.health_metrics ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users can manage own health metrics"
+    ON public.health_metrics FOR ALL
+    USING (auth.uid() = user_id);
+
+CREATE TRIGGER trg_health_metrics_updated_at
+    BEFORE UPDATE ON public.health_metrics
+    FOR EACH ROW
+    EXECUTE FUNCTION update_modified_column();
+

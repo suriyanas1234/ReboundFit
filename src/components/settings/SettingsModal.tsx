@@ -14,6 +14,9 @@ import {
   ShieldCheck,
   Sparkles,
   Calendar,
+  Copy,
+  Download,
+  Activity,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useCloudSync } from "@/hooks/useCloudSync";
@@ -59,6 +62,25 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<boolean>(false);
 
+  const [syncToken, setSyncToken] = useState<string>(() => {
+    return (
+      profile?.appleHealthSyncToken ||
+      (user?.id ? `rf_ah_${user.id.replace(/-/g, "").substring(0, 16)}` : "rf_ah_9a8b7c6d5e4f3a2b")
+    );
+  });
+  const [copiedUrl, setCopiedUrl] = useState<boolean>(false);
+  const [copiedToken, setCopiedToken] = useState<boolean>(false);
+  const [isTestingWebhook, setIsTestingWebhook] = useState<boolean>(false);
+  const [testWebhookStatus, setTestWebhookStatus] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const webhookUrl =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/api/integrations/apple-health`
+      : "https://reboundfit.vercel.app/api/integrations/apple-health";
+
   // Sync state when profile loads/changes or modal opens
   useEffect(() => {
     if (profile) {
@@ -69,6 +91,9 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       setTargetCalories(profile.targetCalories || 2650);
       setTargetProteinG(profile.targetProteinG || 165);
       setActivityLevel(profile.activityLevel || "moderate");
+      if (profile.appleHealthSyncToken) {
+        setSyncToken(profile.appleHealthSyncToken);
+      }
     }
   }, [profile, user, isOpen]);
 
@@ -86,6 +111,110 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setTargetCalories(Math.round(base + surplus));
   };
 
+  const handleCopyWebhookUrl = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(webhookUrl);
+      setCopiedUrl(true);
+      setTimeout(() => setCopiedUrl(false), 2000);
+    }
+  };
+
+  const handleCopySyncToken = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(syncToken);
+      setCopiedToken(true);
+      setTimeout(() => setCopiedToken(false), 2000);
+    }
+  };
+
+  const handleRegenerateToken = () => {
+    const chars = "abcdef0123456789";
+    let token = "rf_ah_";
+    for (let i = 0; i < 24; i++) {
+      token += chars[Math.floor(Math.random() * chars.length)];
+    }
+    setSyncToken(token);
+    updateProfile({ appleHealthSyncToken: token });
+  };
+
+  const handleDownloadShortcutConfig = () => {
+    const shortcutConfig = {
+      name: "ReboundFit Apple Health Daily Sync",
+      version: "1.0",
+      description: "iOS Shortcut configuration for syncing Apple HealthKit metrics to ReboundFit",
+      webhookUrl,
+      authorizationHeader: `Bearer ${syncToken}`,
+      schedule: "Daily at 08:00 AM",
+      expectedPayload: {
+        date: "Current Date (YYYY-MM-DD)",
+        step_count: "HealthKit: Step Count (Sum for Day)",
+        active_energy_burned_kcal: "HealthKit: Active Energy Burned (Sum for Day)",
+        basal_energy_burned_kcal: "HealthKit: Resting Energy Burned (Sum for Day)",
+        sleep_hours: "HealthKit: Sleep Analysis (Time Asleep in Hours)",
+        resting_heart_rate_bpm: "HealthKit: Resting Heart Rate (Latest)",
+        weight_lbs: "HealthKit: Weight / Body Mass (Latest)",
+      },
+      curlSample: `curl -X POST "${webhookUrl}" -H "Authorization: Bearer ${syncToken}" -H "Content-Type: application/json" -d '{"steps":8420,"activeCalories":640,"sleepHours":7.7,"heartRate":58}'`,
+    };
+
+    const blob = new Blob([JSON.stringify(shortcutConfig, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ReboundFit-Apple-Health-Shortcut.json";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleSendTestWebhook = async () => {
+    setIsTestingWebhook(true);
+    setTestWebhookStatus(null);
+    try {
+      const todayStr = new Date().toISOString().split("T")[0];
+      const res = await fetch("/api/integrations/apple-health", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${syncToken}`,
+        },
+        body: JSON.stringify({
+          date: todayStr,
+          step_count: 8420,
+          distance_km: 6.2,
+          active_energy_burned_kcal: 640,
+          basal_energy_burned_kcal: 1820,
+          sleep_hours: 7.7,
+          deep_sleep_hours: 1.8,
+          resting_heart_rate_bpm: 58,
+          source: "apple_health_test_runner",
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        setTestWebhookStatus({
+          type: "success",
+          message: "✓ Test metrics received and recorded! Check your Summary tab.",
+        });
+        syncNow();
+      } else {
+        setTestWebhookStatus({
+          type: "error",
+          message: data.message || "Failed to deliver test health payload.",
+        });
+      }
+    } catch (err: any) {
+      setTestWebhookStatus({
+        type: "error",
+        message: err.message || "Network error sending test health payload.",
+      });
+    } finally {
+      setIsTestingWebhook(false);
+    }
+  };
+
   const handleSave = async () => {
     setIsSaving(true);
     try {
@@ -98,7 +227,23 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         targetCalories: Number(targetCalories),
         targetProteinG: Number(targetProteinG),
         activityLevel,
+        appleHealthSyncToken: syncToken,
       });
+
+      if (user?.id) {
+        try {
+          await supabase
+            .from("profiles")
+            .update({
+              display_name: displayName.trim(),
+              apple_health_sync_token: syncToken,
+            })
+            .eq("id", user.id);
+        } catch {
+          // Supabase profile update notice
+        }
+      }
+
       setSaveSuccess(true);
       setTimeout(() => {
         setSaveSuccess(false);
@@ -253,6 +398,173 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
               <p className="text-[11px] text-[#8E8E93] leading-relaxed pt-2 border-t border-[#38383A]">
                 Authorizes direct sync so your scheduled workouts appear in Google Calendar, and lets ReboundFit check your busy hours to auto-fit gym sessions.
               </p>
+            </div>
+          </div>
+
+          {/* =========================================================================
+              APPLE HEALTH & SHORTCUTS SYNC (Live HealthKit Webhook Ingestion)
+              ========================================================================= */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-[#8E8E93] uppercase tracking-wider block">
+                Apple Health Webhook Sync
+              </span>
+              <span className="text-[10px] font-mono text-[#30D158] font-semibold bg-[#30D158]/15 px-2 py-0.5 rounded-full">
+                HealthKit PWA Bridge
+              </span>
+            </div>
+
+            <div className="p-4 rounded-2xl bg-[#2C2C2E] border border-[#38383A] space-y-4">
+              {/* Header & Status */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#FF2D55]/20 text-[#FF2D55] flex items-center justify-center">
+                    <Activity className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white flex items-center space-x-1.5">
+                      <span>Apple Health Integration</span>
+                      <span className="px-1.5 py-0.5 rounded-full bg-[#30D158]/15 text-[#30D158] text-[9px] font-semibold">
+                        Live Webhook
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#8E8E93]">
+                      Syncs Steps, Sleep, Heart Rate & Caloric Burn
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Credentials Box */}
+              <div className="space-y-3 pt-2 border-t border-[#38383A]">
+                {/* Webhook Ingestion URL */}
+                <div>
+                  <label className="text-[10px] font-mono text-[#8E8E93] uppercase block mb-1">
+                    Webhook Endpoint URL
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={webhookUrl}
+                      className="flex-1 px-3 py-2 rounded-xl bg-[#1C1C1E] border border-[#38383A] text-xs font-mono text-white select-all truncate"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCopyWebhookUrl}
+                      className="px-3 py-2 rounded-xl bg-[#1C1C1E] hover:bg-[#38383A] border border-[#38383A] text-xs font-semibold text-white transition-all flex items-center space-x-1 flex-shrink-0"
+                    >
+                      {copiedUrl ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-[#30D158]" />
+                          <span className="text-[#30D158]">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Personal Sync Token */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-mono text-[#8E8E93] uppercase">
+                      Personal Sync Token (Bearer Auth)
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleRegenerateToken}
+                      className="text-[10px] font-mono text-[#0A84FF] hover:underline"
+                    >
+                      Regenerate
+                    </button>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={syncToken}
+                      className="flex-1 px-3 py-2 rounded-xl bg-[#1C1C1E] border border-[#38383A] text-xs font-mono text-[#30D158] select-all font-semibold truncate"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCopySyncToken}
+                      className="px-3 py-2 rounded-xl bg-[#1C1C1E] hover:bg-[#38383A] border border-[#38383A] text-xs font-semibold text-white transition-all flex items-center space-x-1 flex-shrink-0"
+                    >
+                      {copiedToken ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-[#30D158]" />
+                          <span className="text-[#30D158]">Copied</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-neutral-400" />
+                          <span>Copy</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Action Buttons: Import Shortcut & Send Test Sample */}
+              <div className="pt-2 border-t border-[#38383A] flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={handleDownloadShortcutConfig}
+                  className="flex-1 min-w-[130px] px-3 py-2 rounded-xl bg-[#0A84FF]/15 hover:bg-[#0A84FF]/25 border border-[#0A84FF]/30 text-[#0A84FF] text-xs font-semibold flex items-center justify-center space-x-1.5 transition-all active:scale-95"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Import Shortcut</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isTestingWebhook}
+                  onClick={handleSendTestWebhook}
+                  className="flex-1 min-w-[130px] px-3 py-2 rounded-xl bg-[#30D158]/15 hover:bg-[#30D158]/25 border border-[#30D158]/30 text-[#30D158] text-xs font-semibold flex items-center justify-center space-x-1.5 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isTestingWebhook ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Sending...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>Send Test Sync</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Test Feedback Notice */}
+              {testWebhookStatus && (
+                <div
+                  className={`p-3 rounded-xl text-xs border ${
+                    testWebhookStatus.type === "success"
+                      ? "bg-[#30D158]/10 border-[#30D158]/30 text-[#30D158]"
+                      : "bg-[#FF453A]/10 border-[#FF453A]/30 text-[#FF453A]"
+                  }`}
+                >
+                  {testWebhookStatus.message}
+                </div>
+              )}
+
+              {/* Setup Guide Accordion / Steps */}
+              <div className="pt-2 border-t border-[#38383A] text-[11px] text-[#8E8E93] space-y-1.5 leading-relaxed">
+                <div className="font-semibold text-white">How to connect Apple Health:</div>
+                <p>
+                  <strong className="text-white">Option 1 (iOS Shortcuts):</strong> Create a daily automation in the Apple Shortcuts app to send step count, sleep, and heart rate to your Webhook URL with <code className="text-[#30D158]">Authorization: Bearer [Token]</code>.
+                </p>
+                <p>
+                  <strong className="text-white">Option 2 (Health Auto Export):</strong> In Health Auto Export, enable REST API sync and paste your Webhook URL and Sync Token.
+                </p>
+              </div>
             </div>
           </div>
 
