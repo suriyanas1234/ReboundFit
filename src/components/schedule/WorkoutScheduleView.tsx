@@ -57,6 +57,7 @@ import {
   AlertTriangle,
   FileText,
   Info,
+  Trash2,
 } from "lucide-react";
 
 interface WorkoutScheduleViewProps {
@@ -103,6 +104,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
 
   // Google Calendar Sync & Import States
   const [isSyncingGCal, setIsSyncingGCal] = useState<boolean>(false);
+  const [isClearingGCal, setIsClearingGCal] = useState<boolean>(false);
   const [hasGoogleToken, setHasGoogleToken] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<{
     type: "success" | "error" | "info";
@@ -401,6 +403,104 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
       }
     } finally {
       setIsSyncingGCal(false);
+    }
+  };
+
+  const handleClearSyncedCalendarEvents = async () => {
+    setIsClearingGCal(true);
+    setSyncStatus(null);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const providerToken = getStoredGoogleProviderToken(session);
+
+      if (!providerToken) {
+        setHasGoogleToken(false);
+        setSyncStatus({
+          type: "error",
+          message: "Please reconnect Google Calendar to grant event access.",
+        });
+        setIsClearingGCal(false);
+        return;
+      }
+
+      const existingEventIds = scheduledWorkouts
+        .map((w) => w.googleCalendarEventId)
+        .filter(Boolean) as string[];
+
+      const response = await fetch("/api/calendar/clear", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${providerToken}`,
+        },
+        body: JSON.stringify({
+          mondayDate: selectedMonday,
+          eventIds: existingEventIds,
+          providerToken,
+        }),
+      });
+
+      const resData = await response.json().catch(() => ({}));
+
+      if (!response.ok || !resData.success) {
+        if (
+          response.status === 401 ||
+          response.status === 403 ||
+          resData.error === "INSUFFICIENT_SCOPE" ||
+          resData.error === "MISSING_TOKEN" ||
+          resData.message?.toLowerCase().includes("reconnect")
+        ) {
+          setHasGoogleToken(false);
+          setSyncStatus({
+            type: "error",
+            message: "Please reconnect Google Calendar to grant event access.",
+          });
+          return;
+        }
+
+        setSyncStatus({
+          type: "error",
+          message: resData.message || "Failed to clear Google Calendar workouts.",
+        });
+        return;
+      }
+
+      setHasGoogleToken(true);
+
+      // Clean up googleCalendarEventId from all scheduled workouts of this week
+      const updatedWeek = scheduledWorkouts.map((w) => {
+        if (w.googleCalendarEventId) {
+          const cleaned = { ...w, googleCalendarEventId: undefined };
+          updateScheduledWorkout(cleaned);
+          return cleaned;
+        }
+        return w;
+      });
+      setScheduledWorkouts(updatedWeek);
+
+      setSyncStatus({
+        type: "success",
+        message: "✓ Cleared synced workouts from Google Calendar.",
+      });
+    } catch (err: any) {
+      if (
+        err?.message?.includes("scope") ||
+        err?.message?.includes("token") ||
+        err?.message?.includes("permission")
+      ) {
+        setHasGoogleToken(false);
+        setSyncStatus({
+          type: "error",
+          message: "Please reconnect Google Calendar to grant event access.",
+        });
+      } else {
+        setSyncStatus({
+          type: "error",
+          message: err.message || "Failed to clear Google Calendar workouts.",
+        });
+      }
+    } finally {
+      setIsClearingGCal(false);
     }
   };
 
@@ -748,7 +848,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
           {/* Sync Week with Google Calendar */}
           <button
             onClick={handleSyncWholeWeekGoogleCalendar}
-            disabled={isSyncingGCal}
+            disabled={isSyncingGCal || isClearingGCal}
             className="flex items-center space-x-2 px-4 py-2 rounded-full bg-[#0A84FF] hover:bg-[#0071E3] text-white font-semibold text-xs active:scale-95 disabled:opacity-50 transition-all shadow-sm"
           >
             {isSyncingGCal ? (
@@ -757,6 +857,21 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
               <CalendarCheck className="w-3.5 h-3.5 stroke-[2.2]" />
             )}
             <span>{isSyncingGCal ? "Syncing..." : "Sync Week to Google Cal"}</span>
+          </button>
+
+          {/* Clear / Remove Synced Calendar Events */}
+          <button
+            onClick={handleClearSyncedCalendarEvents}
+            disabled={isSyncingGCal || isClearingGCal}
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-full bg-red-500/15 hover:bg-red-500/25 border border-red-500/20 text-xs font-medium text-red-400 hover:text-red-300 active:scale-95 disabled:opacity-50 transition-all shadow-sm"
+            title="Clear ReboundFit workouts from Google Calendar for this week"
+          >
+            {isClearingGCal ? (
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Trash2 className="w-3.5 h-3.5" />
+            )}
+            <span>{isClearingGCal ? "Clearing..." : "Clear Cal Week"}</span>
           </button>
         </div>
       </div>
@@ -1144,7 +1259,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
           ========================================================================= */}
       {isFrequencyModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-2xl rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl space-y-5 max-h-[90vh] flex flex-col">
+          <div className="w-full max-w-2xl rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl space-y-5 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-surface-border">
               <div>
                 <div className="flex items-center space-x-2">
@@ -1291,7 +1406,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
           ========================================================================= */}
       {isCalendarFitModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-2xl rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl space-y-5 max-h-[90vh] flex flex-col">
+          <div className="w-full max-w-2xl rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl space-y-5 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between pb-3 border-b border-surface-border">
               <div>
                 <div className="flex items-center space-x-2">
@@ -1521,7 +1636,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
           ========================================================================= */}
       {editingWorkout && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="w-full max-w-lg rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl space-y-4">
+          <div className="w-full max-w-lg rounded-3xl bg-surface border border-surface-border p-6 shadow-2xl space-y-4 max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between pb-3 border-b border-surface-border">
               <div>
                 <h3 className="text-lg font-bold text-white">Edit Scheduled Workout</h3>

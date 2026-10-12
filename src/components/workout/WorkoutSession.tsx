@@ -16,6 +16,7 @@ import {
   Coffee,
   Dumbbell,
   Sparkles,
+  CheckCircle2,
 } from "lucide-react";
 import { LocalExercise, LocalScheduledWorkout } from "@/lib/db";
 import { ROUTINE_TEMPLATES, RoutineTemplate } from "@/algorithms/workoutScheduler";
@@ -65,6 +66,7 @@ export interface WorkoutSessionProps {
   ) => void;
   onToggleSet: (exIndex: number, setIndex: number) => void;
   onOpenAddExercise: () => void;
+  onFinishWorkout?: () => void;
   prCelebration?: string | null;
 }
 
@@ -90,8 +92,12 @@ export function WorkoutSession({
   onDirectSetInput,
   onToggleSet,
   onOpenAddExercise,
+  onFinishWorkout,
   prCelebration,
 }: WorkoutSessionProps) {
+  // Workout Completion Modal State
+  const [showCompletionModal, setShowCompletionModal] = useState<boolean>(false);
+
   // Rest Timer State
   const [restPresetSeconds, setRestPresetSeconds] = useState<number>(90);
   const [restSecondsRemaining, setRestSecondsRemaining] = useState<number>(90);
@@ -180,6 +186,26 @@ export function WorkoutSession({
     if (willBeCompleted) {
       setRestSecondsRemaining(restPresetSeconds);
       setIsTimerRunning(true);
+
+      // Check if all sets across all exercises are now completed
+      const totalSets = activeExercises.reduce((acc, ex) => acc + ex.sets.length, 0);
+      const currentlyCompletedSets = activeExercises.reduce(
+        (acc, ex) => acc + ex.sets.filter((s) => s.completed).length,
+        0
+      );
+      if (totalSets > 0 && currentlyCompletedSets + 1 >= totalSets) {
+        setShowCompletionModal(true);
+        if (onFinishWorkout) {
+          onFinishWorkout();
+        }
+      }
+    }
+  };
+
+  const handleFinishWorkout = () => {
+    setShowCompletionModal(true);
+    if (onFinishWorkout) {
+      onFinishWorkout();
     }
   };
 
@@ -200,11 +226,11 @@ export function WorkoutSession({
 
   return (
     <div className="space-y-5">
-      {/* PR Celebration Floating Banner */}
+      {/* PR Celebration Floating Banner (Centered, safe-area padded, collision-safe) */}
       {prCelebration && (
-        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[110] bg-[#30D158] text-black px-6 py-3 rounded-2xl shadow-2xl font-black text-sm flex items-center space-x-2 animate-bounce">
-          <Trophy className="w-5 h-5 stroke-[2.5]" />
-          <span>{prCelebration}</span>
+        <div className="fixed top-[max(1.25rem,env(safe-area-inset-top))] left-1/2 -translate-x-1/2 z-[110] max-w-[90vw] w-auto mx-auto bg-[#30D158] text-black px-5 py-3 rounded-2xl shadow-2xl font-black text-xs sm:text-sm flex items-center justify-center space-x-2 text-center animate-bounce">
+          <Trophy className="w-5 h-5 flex-shrink-0 stroke-[2.5]" />
+          <span className="truncate">{prCelebration}</span>
         </div>
       )}
 
@@ -475,16 +501,84 @@ export function WorkoutSession({
             </div>
           ))}
 
-          {/* Add Exercise Action */}
-          <div className="flex justify-center pt-2">
+          {/* Action Row: Add Exercise & Finish Workout / Done */}
+          <div className="flex flex-wrap items-center justify-center gap-3 pt-3">
             <button
               type="button"
               onClick={onOpenAddExercise}
               className="px-5 py-2.5 rounded-full bg-[#1C1C1E] hover:bg-[#2C2C2E] border border-[#2C2C2E] text-xs font-semibold text-white flex items-center space-x-2 transition-all active:scale-95 shadow-md"
             >
               <Plus className="w-4 h-4 text-[#0A84FF]" />
-              <span>Add Exercise to Session</span>
+              <span>Add Exercise</span>
             </button>
+
+            <button
+              type="button"
+              onClick={handleFinishWorkout}
+              className={`px-6 py-2.5 rounded-full text-xs font-bold flex items-center space-x-2 transition-all active:scale-95 shadow-lg ${
+                scheduledDay?.isCompleted
+                  ? "bg-[#30D158]/20 border border-[#30D158]/40 text-[#30D158]"
+                  : "bg-[#0A84FF] hover:bg-[#0071E3] text-white shadow-[#0A84FF]/25"
+              }`}
+            >
+              <CheckCircle2 className="w-4 h-4 stroke-[2.2]" />
+              <span>{scheduledDay?.isCompleted ? "Workout Completed ✓" : "Finish Workout"}</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          WORKOUT COMPLETION CELEBRATION MODAL (Centered, Apple HIG Aesthetic)
+          ========================================================================= */}
+      {showCompletionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+          <div className="w-full max-w-sm mx-auto text-center rounded-2xl p-6 bg-[#1C1C1E] border border-neutral-800 shadow-2xl space-y-4">
+            {/* Celebration Icon Badge */}
+            <div className="w-16 h-16 rounded-2xl bg-[#30D158]/15 border border-[#30D158]/30 text-[#30D158] flex items-center justify-center mx-auto shadow-lg shadow-[#30D158]/10">
+              <Trophy className="w-8 h-8 stroke-[2.2]" />
+            </div>
+
+            <div>
+              <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#30D158]">
+                Session Complete
+              </span>
+              <h3 className="text-xl font-extrabold text-white tracking-tight mt-1">
+                Workout Finished! 🎉
+              </h3>
+              <p className="text-xs text-[#8E8E93] mt-1 leading-relaxed">
+                Great intensity on <span className="text-white font-medium">{routineName}</span>. All sets have been logged and synced with progressive overload targets.
+              </p>
+            </div>
+
+            {/* Quick Summary Pill */}
+            <div className="p-3 rounded-xl bg-[#2C2C2E] border border-[#38383A] flex items-center justify-around text-xs font-mono">
+              <div>
+                <span className="text-[10px] text-[#8E8E93] block uppercase">Exercises</span>
+                <span className="text-sm font-bold text-white">{activeExercises.length}</span>
+              </div>
+              <div className="w-px h-6 bg-[#38383A]" />
+              <div>
+                <span className="text-[10px] text-[#8E8E93] block uppercase">Sets Done</span>
+                <span className="text-sm font-bold text-[#30D158]">
+                  {activeExercises.reduce(
+                    (acc, ex) => acc + ex.sets.filter((s) => s.completed).length,
+                    0
+                  )}{" "}
+                  / {activeExercises.reduce((acc, ex) => acc + ex.sets.length, 0)}
+                </span>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowCompletionModal(false)}
+                className="w-full py-3 rounded-full bg-[#0A84FF] hover:bg-[#0071E3] text-white font-bold text-xs active:scale-95 transition-all shadow-md"
+              >
+                Done
+              </button>
+            </div>
           </div>
         </div>
       )}

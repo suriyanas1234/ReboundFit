@@ -116,7 +116,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       {/* Backdrop tap dismiss */}
       <div className="absolute inset-0 -z-10" onClick={onClose} />
 
-      <div className="w-full max-w-lg rounded-t-[32px] sm:rounded-3xl bg-[#1C1C1E] border border-[#38383A] shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-slide-up">
+      <div className="w-full max-w-lg rounded-t-[32px] sm:rounded-3xl bg-[#1C1C1E] border border-[#38383A] shadow-2xl flex flex-col max-h-[85vh] overflow-hidden animate-slide-up">
         {/* iOS Drag Handle */}
         <div className="sm:hidden w-10 h-1 bg-[#38383A] rounded-full mx-auto mt-2.5 mb-1" />
 

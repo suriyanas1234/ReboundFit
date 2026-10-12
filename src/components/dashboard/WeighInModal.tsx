@@ -81,7 +81,7 @@ export function WeighInModal({
       {/* Dismiss backdrop overlay on click outside */}
       <div className="absolute inset-0 -z-10" onClick={onClose} />
 
-      <div className="w-full max-w-lg bg-[#1C1C1E] border border-[#38383A] rounded-t-3xl sm:rounded-2xl p-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] max-h-[90vh] overflow-y-auto shadow-2xl relative animate-slide-up">
+      <div className="w-full max-w-lg bg-[#1C1C1E] border border-[#38383A] rounded-t-3xl sm:rounded-2xl p-6 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] max-h-[85vh] overflow-y-auto shadow-2xl relative animate-slide-up">
         {/* iOS Drag Handle indicator */}
         <div className="sm:hidden w-10 h-1 bg-[#38383A] rounded-full mx-auto -mt-2 mb-4" />
 

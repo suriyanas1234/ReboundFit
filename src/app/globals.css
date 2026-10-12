@@ -27,13 +27,44 @@ input, textarea {
   -webkit-user-select: text;
 }
 
-/* Safe area support for iPhone Dynamic Island and Home Indicator Bar */
+/* Safe area support for iPhone Dynamic Island and Home Indicator Bar (Portrait & Landscape) */
 .pb-safe {
   padding-bottom: max(env(safe-area-inset-bottom, 16px), 16px);
 }
 
 .pt-safe {
   padding-top: max(env(safe-area-inset-top, 16px), 16px);
+}
+
+.pl-safe {
+  padding-left: max(env(safe-area-inset-left, 0px), 0px);
+}
+
+.pr-safe {
+  padding-right: max(env(safe-area-inset-right, 0px), 0px);
+}
+
+.px-safe {
+  padding-left: max(env(safe-area-inset-left, 16px), 16px);
+  padding-right: max(env(safe-area-inset-right, 16px), 16px);
+}
+
+/* Compact Landscape Viewports (@media (orientation: landscape) and (max-height: 500px)) */
+@media (orientation: landscape) and (max-height: 500px) {
+  .mobile-nav-dock {
+    height: 3.25rem !important;
+    padding-top: 0.125rem !important;
+    padding-bottom: max(env(safe-area-inset-bottom, 4px), 4px) !important;
+  }
+  .mobile-nav-dock a {
+    padding-top: 0.125rem !important;
+    padding-bottom: 0.125rem !important;
+    font-size: 10px !important;
+  }
+  .mobile-nav-dock svg {
+    width: 1.125rem !important;
+    height: 1.125rem !important;
+  }
 }
 
 /* Apple iOS-style grouped card utility */

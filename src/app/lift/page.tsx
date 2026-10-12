@@ -390,6 +390,7 @@ export default function WorkoutsPage() {
             }}
             onToggleSet={handleToggleSet}
             onOpenAddExercise={() => setIsAddExerciseModalOpen(true)}
+            onFinishWorkout={handleToggleManualComplete}
             prCelebration={prCelebration}
           />
 
