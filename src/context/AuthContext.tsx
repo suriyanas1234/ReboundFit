@@ -128,8 +128,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // 1. If metaProfile is passed directly from Supabase session, use it immediately
       if (incomingMetaProfile && incomingMetaProfile.onboardingCompleted) {
+        // Query local Dexie or localStorage first to check if there are newer local schedule customizations
+        const existingLocal =
+          (await db.profiles.where("userId").equals(userId).first()) ||
+          (await db.profiles.get(`profile-${userId}`)) ||
+          getProfileFromLocalStorage(userId, targetEmail);
+
+        const localIsNewer =
+          existingLocal?.updatedAt &&
+          (!incomingMetaProfile.updatedAt ||
+            new Date(existingLocal.updatedAt).getTime() >= new Date(incomingMetaProfile.updatedAt).getTime());
+
         const syncedProf: LocalProfile = {
           ...incomingMetaProfile,
+          // Retain customized schedule preferences and frequency if present locally and not yet synced or newer
+          ...(existingLocal?.workoutDaysPerWeek
+            ? { workoutDaysPerWeek: localIsNewer ? existingLocal.workoutDaysPerWeek : (incomingMetaProfile.workoutDaysPerWeek || existingLocal.workoutDaysPerWeek) }
+            : {}),
+          ...(existingLocal?.customWeeklySchedule
+            ? { customWeeklySchedule: localIsNewer ? existingLocal.customWeeklySchedule : (incomingMetaProfile.customWeeklySchedule || existingLocal.customWeeklySchedule) }
+            : {}),
           userId,
           email: incomingMetaProfile.email || targetEmail,
         };
@@ -561,14 +579,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const updateProfile = async (updates: Partial<LocalProfile>) => {
-    if (!profile || !user) return;
+    if (!user) return;
+    const baseProf = profile || (await db.profiles.where("userId").equals(user.id).first()) || (await db.profiles.get(`profile-${user.id}`));
+    if (!baseProf) return;
+
     const updated: LocalProfile = {
-      ...profile,
+      ...baseProf,
       ...updates,
       updatedAt: new Date().toISOString(),
     };
+
+    // 1. Optimistic UI update
+    setProfile(updated);
+
+    // 2. Local IndexedDB & LocalStorage persistence
     await db.profiles.put(updated);
     saveProfileToLocalStorage(updated);
+
+    // 3. Supabase Auth user_metadata cloud persistence
     if (isSupabaseConfigured) {
       await syncToSupabaseAuthMetadata(updated);
       try {
@@ -581,12 +609,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           unit_preference: updated.weightUnit === "kg" ? "metric" : "imperial",
           target_calories: updated.targetCalories,
           target_protein_g: updated.targetProteinG,
+          ...(updated.workoutDaysPerWeek ? { workout_days_per_week: updated.workoutDaysPerWeek } : {}),
         });
       } catch (e) {
         console.warn("Supabase profiles upsert note:", e);
       }
     }
-    setProfile(updated);
   };
 
   const hasCompletedOnboarding = Boolean(profile?.onboardingCompleted);

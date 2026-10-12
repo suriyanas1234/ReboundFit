@@ -322,22 +322,24 @@ export async function ensureWorkoutSchedule(
   const toCreate: LocalScheduledWorkout[] = [];
 
   for (const date of dates) {
+    const d = new Date(date + "T00:00:00");
+    const dayOfWeek = d.getDay(); // 0 = Sun, 1 = Mon, etc.
+    const template = pattern[dayOfWeek] || ROUTINE_TEMPLATES.rest;
     const existingRecord = existingMap.get(date);
+
     if (existingRecord) {
-      // Heal previously cached Sunday rest records in default PPL if not completed
-      const d = new Date(date + "T00:00:00");
-      if (
-        splitType === "ppl" &&
-        !workoutDaysPerWeek &&
-        !customSchedule &&
-        d.getDay() === 0 &&
-        existingRecord.dayType === "rest" &&
-        !existingRecord.isCompleted
-      ) {
-        const template = ROUTINE_TEMPLATES.legs_b;
-        const healed: LocalScheduledWorkout = {
+      // If the workout was NOT completed yet, reconcile with user's configured frequency/custom schedule
+      const needsFrequencyUpdate =
+        !existingRecord.isCompleted &&
+        (Boolean(workoutDaysPerWeek) || Boolean(customSchedule)) &&
+        (existingRecord.dayType !== template.dayType ||
+          (template.dayType === "workout" && existingRecord.routineName !== template.name));
+
+      if (needsFrequencyUpdate) {
+        const updatedRecord: LocalScheduledWorkout = {
           ...existingRecord,
           routineName: template.name,
+          splitType: template.splitType,
           dayType: template.dayType,
           focusMuscleGroups: template.focusMuscleGroups,
           exerciseIds: template.exerciseIds,
@@ -345,14 +347,32 @@ export async function ensureWorkoutSchedule(
           notes: template.description,
           updatedAt: new Date().toISOString(),
         };
+        toCreate.push(updatedRecord);
+        existingMap.set(date, updatedRecord);
+      } else if (
+        splitType === "ppl" &&
+        !workoutDaysPerWeek &&
+        !customSchedule &&
+        d.getDay() === 0 &&
+        existingRecord.dayType === "rest" &&
+        !existingRecord.isCompleted
+      ) {
+        // Heal previously cached Sunday rest records in default PPL if not completed
+        const templateLegs = ROUTINE_TEMPLATES.legs_b;
+        const healed: LocalScheduledWorkout = {
+          ...existingRecord,
+          routineName: templateLegs.name,
+          dayType: templateLegs.dayType,
+          focusMuscleGroups: templateLegs.focusMuscleGroups,
+          exerciseIds: templateLegs.exerciseIds,
+          durationMinutes: templateLegs.defaultDurationMinutes,
+          notes: templateLegs.description,
+          updatedAt: new Date().toISOString(),
+        };
         toCreate.push(healed);
         existingMap.set(date, healed);
       }
     } else {
-      const d = new Date(date + "T00:00:00");
-      const dayOfWeek = d.getDay(); // 0 = Sun, 1 = Mon, etc.
-      const template = pattern[dayOfWeek] || ROUTINE_TEMPLATES.rest;
-
       const record: LocalScheduledWorkout = {
         id: `sched-${userId}-${date}`,
         userId,

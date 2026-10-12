@@ -66,8 +66,31 @@ interface WorkoutScheduleViewProps {
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const DAY_SHORT_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+function buildScheduleConfig(splitType: string = "ppl", frequency: number = 6) {
+  const pattern = getSplitWeeklyPattern(splitType, frequency);
+  const cfg: {
+    [dayOfWeek: number]: {
+      dayType: "workout" | "rest";
+      routineKey: string;
+      preferredTime: string;
+    };
+  } = {};
+  for (let day = 0; day < 7; day++) {
+    const template = pattern[day] || ROUTINE_TEMPLATES.rest;
+    const key =
+      Object.entries(ROUTINE_TEMPLATES).find(([, t]) => t.name === template.name)?.[0] ||
+      (template.dayType === "rest" ? "rest" : "push_a");
+    cfg[day] = {
+      dayType: template.dayType,
+      routineKey: key,
+      preferredTime: "08:00",
+    };
+  }
+  return cfg;
+}
+
 export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutScheduleViewProps) {
-  const { user, profile, signInWithGoogle } = useAuth();
+  const { user, profile, signInWithGoogle, updateProfile } = useAuth();
   const [exercises, setExercises] = useState<LocalExercise[]>([]);
   const [scheduledWorkouts, setScheduledWorkouts] = useState<LocalScheduledWorkout[]>([]);
   const [selectedMonday, setSelectedMonday] = useState<string>(() => {
@@ -118,22 +141,21 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
 
   // Frequency & Custom Days Modal
   const [isFrequencyModalOpen, setIsFrequencyModalOpen] = useState<boolean>(false);
+  const [selectedPresetFrequency, setSelectedPresetFrequency] = useState<number>(() => {
+    return profile?.workoutDaysPerWeek || 6;
+  });
   const [customDaysConfig, setCustomDaysConfig] = useState<{
     [dayOfWeek: number]: {
       dayType: "workout" | "rest";
       routineKey: string;
       preferredTime: string;
     };
-  }>({
-    0: { dayType: "workout", routineKey: "legs_b", preferredTime: "08:00" },
-    1: { dayType: "workout", routineKey: "push_a", preferredTime: "08:00" },
-    2: { dayType: "workout", routineKey: "pull_a", preferredTime: "08:00" },
-    3: { dayType: "workout", routineKey: "legs_a", preferredTime: "08:00" },
-    4: { dayType: "rest", routineKey: "rest", preferredTime: "08:00" },
-    5: { dayType: "workout", routineKey: "push_b", preferredTime: "08:00" },
-    6: { dayType: "workout", routineKey: "pull_b", preferredTime: "08:00" },
+  }>(() => {
+    if (profile?.customWeeklySchedule) {
+      return profile.customWeeklySchedule as any;
+    }
+    return buildScheduleConfig(profile?.trainingSplit || "ppl", profile?.workoutDaysPerWeek || 6);
   });
-  const [selectedPresetFrequency, setSelectedPresetFrequency] = useState<number>(6);
 
   // Google Calendar Smart Fit & Availability Modal
   const [isCalendarFitModalOpen, setIsCalendarFitModalOpen] = useState<boolean>(false);
@@ -146,7 +168,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
 
   const todayStr = new Date().toISOString().split("T")[0];
 
-  // Initialize customDaysConfig from profile if present
+  // Initialize customDaysConfig & frequency from profile when hydrated
   useEffect(() => {
     if (profile?.customWeeklySchedule) {
       setCustomDaysConfig(profile.customWeeklySchedule as any);
@@ -154,9 +176,10 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
         setSelectedPresetFrequency(profile.workoutDaysPerWeek);
       }
     } else if (profile?.workoutDaysPerWeek) {
-      handleSelectPreset(profile.workoutDaysPerWeek);
+      setSelectedPresetFrequency(profile.workoutDaysPerWeek);
+      setCustomDaysConfig(buildScheduleConfig(profile?.trainingSplit || "ppl", profile.workoutDaysPerWeek));
     }
-  }, [profile]);
+  }, [profile?.workoutDaysPerWeek, profile?.customWeeklySchedule, profile?.trainingSplit]);
 
   // Load exercises & current week schedule
   const loadWeekSchedule = async (mondayStr: string) => {
@@ -398,19 +421,28 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
         }
       }
 
-      // Save to user profile in Dexie
-      if (profile) {
-        const workoutCount = Object.values(customDaysConfig).filter((c) => c.dayType === "workout").length;
-        const updatedProfile = {
-          ...profile,
-          workoutDaysPerWeek: workoutCount,
-          customWeeklySchedule: customDaysConfig,
-          updatedAt: new Date().toISOString(),
-        };
-        await db.profiles.put(updatedProfile);
+      const workoutCount = Object.values(customDaysConfig).filter((c) => c.dayType === "workout").length;
+
+      // 1. Persist directly via updateProfile (optimistic UI + Dexie + localStorage + Supabase Auth user_metadata)
+      await updateProfile({
+        workoutDaysPerWeek: workoutCount,
+        customWeeklySchedule: customDaysConfig,
+      });
+
+      // 2. Direct Supabase update mutation for profiles table if present
+      try {
+        await supabase
+          .from("profiles")
+          .update({
+            workout_days_per_week: workoutCount,
+            schedule_preferences: customDaysConfig,
+          })
+          .eq("id", user.id);
+      } catch (sbErr) {
+        console.warn("Supabase profiles update notice:", sbErr);
       }
 
-      // Re-apply to current selected week
+      // 3. Re-apply to current selected week
       const weekDates = generateDateRange(selectedMonday, 7);
       const updatedSchedule = await applyCustomWeeklySchedule(
         user.id,
@@ -423,14 +455,14 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
       setIsFrequencyModalOpen(false);
       setSyncStatus({
         type: "success",
-        message: `✓ Applied custom training frequency: ${
-          Object.values(customDaysConfig).filter((c) => c.dayType === "workout").length
-        } workout days & ${
-          Object.values(customDaysConfig).filter((c) => c.dayType === "rest").length
-        } rest days.`,
+        message: `✓ Applied and saved schedule: ${workoutCount} workout days & ${7 - workoutCount} rest days.`,
       });
     } catch (err: any) {
       console.error("Failed to apply custom schedule:", err);
+      setSyncStatus({
+        type: "error",
+        message: err.message || "Failed to save schedule preferences.",
+      });
     }
   };
 
@@ -593,23 +625,23 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
         {/* Action Controls & Navigation */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Week Selector */}
-          <div className="flex items-center rounded-2xl bg-surface-elevated border border-surface-border p-1">
+          <div className="flex items-center rounded-full bg-[#1C1C1E] border border-neutral-800/60 p-1 shadow-sm">
             <button
               onClick={handlePrevWeek}
-              className="p-2 rounded-xl text-gray-400 hover:text-white hover:bg-surface transition-colors"
+              className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-[#2C2C2E] transition-colors"
               title="Previous Week"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
               onClick={handleJumpToToday}
-              className="px-3 py-1.5 rounded-xl text-xs font-bold text-gray-300 hover:text-white hover:bg-surface transition-colors"
+              className="px-3 py-1 rounded-full text-xs font-medium text-neutral-300 hover:text-white hover:bg-[#2C2C2E] transition-colors"
             >
               Today
             </button>
             <button
               onClick={handleNextWeek}
-              className="p-2 rounded-xl text-gray-400 hover:text-white hover:bg-surface transition-colors"
+              className="p-1.5 rounded-full text-neutral-400 hover:text-white hover:bg-[#2C2C2E] transition-colors"
               title="Next Week"
             >
               <ChevronRight className="w-4 h-4" />
@@ -619,20 +651,20 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
           {/* Change Workout Frequency / Rest Days */}
           <button
             onClick={() => setIsFrequencyModalOpen(true)}
-            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-2xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border hover:border-brand-cyan/40 text-xs font-bold text-gray-200 hover:text-white transition-all active:scale-95 shadow-md"
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-full bg-[#1C1C1E] hover:bg-[#2C2C2E] border border-neutral-800/60 text-xs font-medium text-neutral-300 hover:text-white transition-all active:scale-95 shadow-sm"
             title="Configure how many days you work out and have rest days"
           >
-            <Sliders className="w-4 h-4 text-brand-cyan" />
+            <Sliders className="w-3.5 h-3.5 text-neutral-400" />
             <span>Workout & Rest Days</span>
           </button>
 
           {/* Google Calendar Smart Fit */}
           <button
             onClick={() => setIsCalendarFitModalOpen(true)}
-            className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-2xl bg-surface-elevated hover:bg-surface-elevated/80 border border-surface-border hover:border-brand-cyan/40 text-xs font-bold text-gray-200 hover:text-white transition-all active:scale-95 shadow-md"
+            className="flex items-center space-x-1.5 px-3.5 py-2 rounded-full bg-[#1C1C1E] hover:bg-[#2C2C2E] border border-neutral-800/60 text-xs font-medium text-neutral-300 hover:text-white transition-all active:scale-95 shadow-sm"
             title="Import Google Calendar and see where workouts fit"
           >
-            <Zap className="w-4 h-4 text-amber-400" />
+            <Zap className="w-3.5 h-3.5 text-[#FF9500]" />
             <span>Calendar Availability & Fit</span>
           </button>
 
@@ -641,15 +673,15 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
             <button
               onClick={handleConnectGoogleCalendar}
               disabled={isSyncingGCal}
-              className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-2xl bg-brand-cyan/10 hover:bg-brand-cyan/20 border border-brand-cyan/30 hover:border-brand-cyan text-xs font-bold text-brand-cyan transition-all active:scale-95 shadow-md disabled:opacity-50"
+              className="flex items-center space-x-1.5 px-3.5 py-2 rounded-full bg-[#1C1C1E] hover:bg-[#2C2C2E] border border-neutral-800/60 text-xs font-medium text-[#0A84FF] transition-all active:scale-95 shadow-sm disabled:opacity-50"
               title="Connect Google Calendar for direct 1-tap sync and availability checks"
             >
-              <Calendar className="w-4 h-4 text-brand-cyan" />
+              <Calendar className="w-3.5 h-3.5 text-[#0A84FF]" />
               <span>Connect Google Cal</span>
             </button>
           ) : (
-            <div className="hidden sm:flex items-center space-x-1.5 px-3 py-2 rounded-2xl bg-brand-emerald/15 text-brand-emerald text-xs font-bold border border-brand-emerald/30 shadow-md">
-              <CheckCircle2 className="w-4 h-4 text-brand-emerald" />
+            <div className="hidden sm:flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#1C1C1E] border border-neutral-800/60 text-xs font-medium text-neutral-300 shadow-sm">
+              <CheckCircle2 className="w-3.5 h-3.5 text-[#30D158]" />
               <span>Google Cal Connected</span>
             </div>
           )}
@@ -658,12 +690,12 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
           <button
             onClick={handleSyncWholeWeekGoogleCalendar}
             disabled={isSyncingGCal}
-            className="flex items-center space-x-2 px-4 py-2.5 rounded-2xl bg-gradient-to-r from-brand-cyan to-brand-emerald text-black font-extrabold text-xs shadow-lg shadow-brand-cyan/20 active:scale-95 disabled:opacity-50 transition-all"
+            className="flex items-center space-x-2 px-4 py-2 rounded-full bg-[#0A84FF] hover:bg-[#0071E3] text-white font-semibold text-xs active:scale-95 disabled:opacity-50 transition-all shadow-sm"
           >
             {isSyncingGCal ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <CalendarCheck className="w-4 h-4 stroke-[2.5]" />
+              <CalendarCheck className="w-3.5 h-3.5 stroke-[2.2]" />
             )}
             <span>{isSyncingGCal ? "Syncing..." : "Sync Week to Google Cal"}</span>
           </button>
@@ -675,15 +707,15 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
         <div
           className={`p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border ${
             syncStatus.type === "success"
-              ? "bg-brand-emerald/10 border-brand-emerald/30 text-brand-emerald"
+              ? "bg-[#30D158]/10 border-[#30D158]/20 text-[#30D158]"
               : syncStatus.type === "error"
-              ? "bg-brand-rose/10 border-brand-rose/30 text-brand-rose"
-              : "bg-brand-cyan/10 border-brand-cyan/30 text-brand-cyan"
+              ? "bg-[#FF453A]/10 border-[#FF453A]/20 text-[#FF453A]"
+              : "bg-[#0A84FF]/10 border-[#0A84FF]/20 text-[#0A84FF]"
           }`}
         >
           <div className="flex items-center space-x-2">
             {syncStatus.type === "success" ? (
-              <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-[#30D158]" />
             ) : (
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
             )}
@@ -694,14 +726,14 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
               <button
                 type="button"
                 onClick={handleConnectGoogleCalendar}
-                className="px-3 py-1.5 rounded-xl bg-brand-cyan text-black font-extrabold text-xs shadow-md hover:opacity-90 active:scale-95 transition-all whitespace-nowrap"
+                className="px-3.5 py-1.5 rounded-full bg-[#0A84FF] hover:bg-[#0071E3] text-white font-semibold text-xs shadow-sm active:scale-95 transition-all whitespace-nowrap"
               >
                 Connect Google Calendar
               </button>
             )}
             <button
               onClick={() => setSyncStatus(null)}
-              className="text-gray-400 hover:text-white p-1"
+              className="text-neutral-400 hover:text-white p-1"
             >
               <X className="w-4 h-4" />
             </button>
@@ -1090,12 +1122,12 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
                     onClick={() => handleSelectPreset(preset.days)}
                     className={`p-3 rounded-2xl border text-left transition-all ${
                       selectedPresetFrequency === preset.days
-                        ? "bg-brand-cyan/20 border-brand-cyan text-white shadow-md shadow-brand-cyan/10"
-                        : "bg-surface-elevated border-surface-border text-gray-300 hover:border-gray-500"
+                        ? "bg-[#0A84FF]/15 border-[#0A84FF] text-white shadow-sm"
+                        : "bg-[#1C1C1E] border-neutral-800/80 text-neutral-300 hover:border-neutral-600"
                     }`}
                   >
                     <div className="font-bold text-xs">{preset.label}</div>
-                    <div className="text-[10px] text-gray-400 mt-0.5">{preset.desc}</div>
+                    <div className="text-[10px] text-neutral-400 mt-0.5">{preset.desc}</div>
                   </button>
                 ))}
               </div>
@@ -1104,10 +1136,10 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
             {/* 7-Day Day-by-Day Interactive Matrix */}
             <div className="space-y-2 overflow-y-auto pr-1 flex-1">
               <div className="flex items-center justify-between text-xs">
-                <span className="font-mono text-gray-400 uppercase">
+                <span className="font-mono text-neutral-400 uppercase">
                   Weekly Schedule Matrix (Click to toggle Workout vs Rest):
                 </span>
-                <span className="font-mono font-bold text-brand-cyan">
+                <span className="font-mono font-bold text-[#0A84FF]">
                   {currentWorkoutDaysCount} Workout Days • {currentRestDaysCount} Rest Days
                 </span>
               </div>
@@ -1124,10 +1156,10 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
                   return (
                     <div
                       key={dayIdx}
-                      className={`p-3 rounded-2xl border transition-all ${
+                      className={`p-3.5 rounded-2xl border transition-all ${
                         isWorkout
-                          ? "bg-surface-elevated border-brand-cyan/40"
-                          : "bg-surface-elevated/50 border-surface-border text-gray-400"
+                          ? "bg-[#1C1C1E] border-neutral-800/80"
+                          : "bg-[#1C1C1E]/50 border-neutral-800/40 text-neutral-400"
                       }`}
                     >
                       <div className="flex items-center justify-between mb-2">
@@ -1138,10 +1170,10 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
                         <button
                           type="button"
                           onClick={() => handleToggleMatrixDayType(dayIdx)}
-                          className={`px-3 py-1 rounded-xl text-[11px] font-bold font-mono transition-all ${
+                          className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all ${
                             isWorkout
-                              ? "bg-brand-cyan text-black"
-                              : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                              ? "bg-[#0A84FF] text-white shadow-sm"
+                              : "bg-[#2C2C2E] text-neutral-400 border border-neutral-700/60"
                           }`}
                         >
                           {isWorkout ? "Workout" : "Rest Day"}
@@ -1150,21 +1182,21 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
 
                       {isWorkout ? (
                         <div className="space-y-1.5 pt-1">
-                          <label className="text-[10px] font-mono text-gray-400">Assigned Routine:</label>
+                          <label className="text-[10px] font-mono text-neutral-400">Assigned Routine:</label>
                           <select
                             value={cfg.routineKey}
                             onChange={(e) => handleUpdateMatrixRoutine(dayIdx, e.target.value)}
-                            className="w-full bg-surface border border-surface-border rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-brand-cyan"
+                            className="w-full bg-[#2C2C2E] border border-neutral-700/60 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#0A84FF]"
                           >
                             {Object.entries(ROUTINE_TEMPLATES).map(([k, t]) => (
-                              <option key={k} value={k} className="bg-[#12141a]">
+                              <option key={k} value={k} className="bg-[#1C1C1E]">
                                 {t.name}
                               </option>
                             ))}
                           </select>
                         </div>
                       ) : (
-                        <div className="text-[11px] font-mono text-gray-500 italic py-1">
+                        <div className="text-[11px] font-mono text-neutral-500 italic py-1">
                           Active recovery, caloric maintenance, and rest.
                         </div>
                       )}
@@ -1175,18 +1207,18 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
             </div>
 
             {/* Bottom Actions */}
-            <div className="flex items-center justify-end space-x-3 pt-3 border-t border-surface-border">
+            <div className="flex items-center justify-end space-x-3 pt-3 border-t border-neutral-800/80">
               <button
                 type="button"
                 onClick={() => setIsFrequencyModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-gray-400 hover:text-white"
+                className="px-4 py-2 rounded-full text-xs font-semibold text-neutral-400 hover:text-white"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleApplyCustomSchedule}
-                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-brand-cyan to-brand-emerald text-black font-extrabold text-xs shadow-lg shadow-brand-cyan/20 active:scale-95 transition-all"
+                className="px-5 py-2.5 rounded-full bg-[#0A84FF] hover:bg-[#0071E3] text-white font-semibold text-xs active:scale-95 transition-all shadow-sm"
               >
                 Apply & Save Schedule
               </button>
