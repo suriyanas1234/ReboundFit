@@ -230,7 +230,7 @@ export function AppLayout({ children }: AppLayoutProps) {
             NATIVE APPLE HEALTH BOTTOM TAB DOCK (Mobile only: md:hidden)
             Frosted translucent glass, safe area inset, 4 HIG symbols
             ========================================================================= */}
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 backdrop-blur-2xl bg-black/85 border-t border-[#38383A] pb-safe z-50">
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 backdrop-blur-2xl bg-black/85 border-t border-[#38383A] pb-safe z-40">
           <div className="flex items-center justify-around py-1.5 px-2">
             {NAV_ITEMS.map((item) => {
               const isActive = pathname === item.href;

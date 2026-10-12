@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { LocalExercise, LocalScheduledWorkout } from "@/lib/db";
 import { ROUTINE_TEMPLATES, RoutineTemplate } from "@/algorithms/workoutScheduler";
+import { WorkoutSetRow } from "./WorkoutSetRow";
 
 export interface ActiveSetState {
   id: string;
@@ -437,128 +438,38 @@ export function WorkoutSession({
                 </div>
               </div>
 
-              {/* Grouped Set Table Rows with Enlarged Controls */}
+              {/* Clean 5-Column Set Table (Strong / Hevy Modern Layout) */}
               <div className="divide-y divide-[#2C2C2E]">
                 {/* Table Header */}
-                <div className="grid grid-cols-12 text-[10px] font-semibold uppercase text-[#8E8E93] pb-2 px-1 font-mono">
-                  <div className="col-span-2">Set</div>
-                  <div className="col-span-3 sm:col-span-4">Previous</div>
-                  <div className="col-span-4 sm:col-span-3 text-center">Weight</div>
-                  <div className="col-span-2 text-center">Reps</div>
-                  <div className="col-span-1 text-right">Done</div>
+                <div className="grid grid-cols-12 items-center gap-1 text-[10px] font-semibold uppercase text-[#8E8E93] pb-2 px-1 font-mono">
+                  <div className="col-span-1">Set</div>
+                  <div className="col-span-3">Previous</div>
+                  <div className="col-span-3 text-center">LBS</div>
+                  <div className="col-span-3 text-center">Reps</div>
+                  <div className="col-span-2 text-center">Done</div>
                 </div>
 
-                {/* Rows */}
+                {/* Rows without stepper collisions */}
                 {item.sets.map((set, setIndex) => (
-                  <div
+                  <WorkoutSetRow
                     key={set.id}
-                    className={`grid grid-cols-12 items-center py-2.5 px-1 rounded-xl transition-colors ${
-                      set.completed ? "bg-[#30D158]/5" : "hover:bg-[#2C2C2E]/30"
-                    }`}
-                  >
-                    {/* Set Number */}
-                    <div className="col-span-2 flex items-center space-x-1 font-mono text-xs font-bold text-white">
-                      <span>#{set.setNumber}</span>
-                      {set.isPr && (
-                        <span className="text-[8px] bg-[#0A84FF]/20 text-[#0A84FF] px-1 rounded font-bold">
-                          PR
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Previous Benchmark */}
-                    <div className="col-span-3 sm:col-span-4 text-xs font-mono text-[#8E8E93] truncate pr-1">
-                      {set.prevWeightLbs !== null && set.prevReps !== null ? (
-                        `${set.prevWeightLbs} lbs × ${set.prevReps}`
-                      ) : (
-                        <span className="text-[#8E8E93]/60 italic">Day 1</span>
-                      )}
-                    </div>
-
-                    {/* Weight Stepper & Direct Input */}
-                    <div className="col-span-4 sm:col-span-3 flex items-center justify-center space-x-1 font-mono">
-                      <button
-                        type="button"
-                        onClick={() => onUpdateSetValue(exIndex, setIndex, "weightLbs", -5)}
-                        className="min-w-[36px] min-h-[36px] rounded-xl bg-[#2C2C2E] text-white hover:bg-[#38383A] active:scale-95 flex items-center justify-center text-sm font-bold transition-all"
-                        aria-label="Decrease weight"
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <input
-                        type="number"
-                        value={set.weightLbs || ""}
-                        placeholder="0"
-                        onChange={(e) =>
-                          onDirectSetInput(
-                            exIndex,
-                            setIndex,
-                            "weightLbs",
-                            parseFloat(e.target.value) || 0
-                          )
-                        }
-                        className="w-14 py-1 text-center text-xs font-bold font-mono text-white bg-[#1C1C1E] border border-[#38383A] rounded-lg focus:outline-none focus:border-[#0A84FF]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => onUpdateSetValue(exIndex, setIndex, "weightLbs", 5)}
-                        className="min-w-[36px] min-h-[36px] rounded-xl bg-[#2C2C2E] text-white hover:bg-[#38383A] active:scale-95 flex items-center justify-center text-sm font-bold transition-all"
-                        aria-label="Increase weight"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    {/* Reps Stepper & Direct Input */}
-                    <div className="col-span-2 flex items-center justify-center space-x-1 font-mono">
-                      <button
-                        type="button"
-                        onClick={() => onUpdateSetValue(exIndex, setIndex, "reps", -1)}
-                        className="min-w-[36px] min-h-[36px] rounded-xl bg-[#2C2C2E] text-white hover:bg-[#38383A] active:scale-95 flex items-center justify-center text-sm font-bold transition-all"
-                        aria-label="Decrease reps"
-                      >
-                        <Minus className="w-3.5 h-3.5" />
-                      </button>
-                      <input
-                        type="number"
-                        value={set.reps || ""}
-                        placeholder="0"
-                        onChange={(e) =>
-                          onDirectSetInput(
-                            exIndex,
-                            setIndex,
-                            "reps",
-                            parseInt(e.target.value) || 0
-                          )
-                        }
-                        className="w-11 py-1 text-center text-xs font-bold font-mono text-white bg-[#1C1C1E] border border-[#38383A] rounded-lg focus:outline-none focus:border-[#0A84FF]"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => onUpdateSetValue(exIndex, setIndex, "reps", 1)}
-                        className="min-w-[36px] min-h-[36px] rounded-xl bg-[#2C2C2E] text-white hover:bg-[#38383A] active:scale-95 flex items-center justify-center text-sm font-bold transition-all"
-                        aria-label="Increase reps"
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-
-                    {/* Circular Checkmark Button (Turns Apple Green #30D158 and Auto-Starts Timer) */}
-                    <div className="col-span-1 flex justify-end">
-                      <button
-                        type="button"
-                        onClick={() => handleSetToggleWithTimer(exIndex, setIndex)}
-                        className={`min-w-[36px] min-h-[36px] rounded-full flex items-center justify-center transition-all ${
-                          set.completed
-                            ? "bg-[#30D158] text-black shadow-md shadow-[#30D158]/30 font-bold"
-                            : "border-2 border-[#38383A] text-transparent hover:border-[#0A84FF]"
-                        }`}
-                        title={set.completed ? "Set Completed" : "Mark Set Complete"}
-                      >
-                        <Check className="w-4 h-4 stroke-[3]" />
-                      </button>
-                    </div>
-                  </div>
+                    setNumber={set.setNumber}
+                    prevWeightLbs={set.prevWeightLbs}
+                    prevReps={set.prevReps}
+                    weightLbs={set.weightLbs}
+                    reps={set.reps}
+                    completed={set.completed}
+                    isPr={set.isPr}
+                    onWeightChange={(val) =>
+                      onDirectSetInput(exIndex, setIndex, "weightLbs", val)
+                    }
+                    onRepsChange={(val) =>
+                      onDirectSetInput(exIndex, setIndex, "reps", val)
+                    }
+                    onToggleComplete={() =>
+                      handleSetToggleWithTimer(exIndex, setIndex)
+                    }
+                  />
                 ))}
               </div>
             </div>
