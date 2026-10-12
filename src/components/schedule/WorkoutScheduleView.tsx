@@ -305,55 +305,100 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
       const { data: { session } } = await supabase.auth.getSession();
       const providerToken = getStoredGoogleProviderToken(session);
 
-      if (providerToken) {
-        setHasGoogleToken(true);
-        let successCount = 0;
-        for (const w of workoutDays) {
-          const names = getExerciseNames(w.exerciseIds);
-          const payload: CalendarEventPayload = {
-            title: w.routineName,
-            date: w.date,
-            time: w.scheduledTime || preferredTime,
-            durationMinutes: w.durationMinutes,
-            details: w.notes,
-            exerciseNames: names,
-          };
-          const res = await createGoogleCalendarApiEvent(providerToken, payload);
-          if (res.success) {
-            successCount++;
-            if (res.eventId) {
-              await updateScheduledWorkout({ ...w, googleCalendarEventId: res.eventId });
-            }
-          }
+      if (!providerToken) {
+        setHasGoogleToken(false);
+        setSyncStatus({
+          type: "error",
+          message: "Please reconnect Google Calendar to grant event access.",
+        });
+        setIsSyncingGCal(false);
+        return;
+      }
+
+      // Build event payloads for the API route
+      const eventsPayload = workoutDays.map((w) => ({
+        workoutId: w.id,
+        title: w.routineName,
+        date: w.date,
+        time: w.scheduledTime || preferredTime,
+        durationMinutes: w.durationMinutes,
+        details: w.notes,
+        exerciseNames: getExerciseNames(w.exerciseIds),
+      }));
+
+      // Call API route to authenticate calendar insertions via Google Calendar REST API v3
+      const response = await fetch("/api/calendar/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${providerToken}`,
+        },
+        body: JSON.stringify({
+          events: eventsPayload,
+          providerToken,
+        }),
+      });
+
+      const resData = await response.json().catch(() => ({}));
+
+      if (!response.ok || !resData.success) {
+        if (
+          response.status === 401 ||
+          response.status === 403 ||
+          resData.error === "INSUFFICIENT_SCOPE" ||
+          resData.error === "MISSING_TOKEN" ||
+          resData.message?.toLowerCase().includes("reconnect")
+        ) {
+          setHasGoogleToken(false);
+          setSyncStatus({
+            type: "error",
+            message: "Please reconnect Google Calendar to grant event access.",
+          });
+          return;
         }
 
         setSyncStatus({
-          type: "success",
-          message: `✓ Successfully synced ${successCount} workouts directly into your Google Calendar!`,
+          type: "error",
+          message: resData.message || "Failed to sync with Google Calendar.",
+        });
+        return;
+      }
+
+      setHasGoogleToken(true);
+
+      // Reconcile created event IDs with local scheduled workouts
+      if (Array.isArray(resData.results)) {
+        for (const res of resData.results) {
+          if (res.eventId && res.workoutId) {
+            const match = scheduledWorkouts.find((w) => w.id === res.workoutId);
+            if (match) {
+              await updateScheduledWorkout({ ...match, googleCalendarEventId: res.eventId });
+            }
+          }
+        }
+      }
+
+      setSyncStatus({
+        type: "success",
+        message: `✓ Successfully synced ${resData.syncedCount ?? workoutDays.length} workouts directly to your Google Calendar!`,
+      });
+    } catch (err: any) {
+      if (
+        err?.message?.includes("scope") ||
+        err?.message?.includes("token") ||
+        err?.message?.includes("permission")
+      ) {
+        setHasGoogleToken(false);
+        setSyncStatus({
+          type: "error",
+          message: "Please reconnect Google Calendar to grant event access.",
         });
       } else {
-        const payloads: CalendarEventPayload[] = workoutDays.map((w) => ({
-          title: w.routineName,
-          date: w.date,
-          time: w.scheduledTime || preferredTime,
-          durationMinutes: w.durationMinutes,
-          details: w.notes,
-          exerciseNames: getExerciseNames(w.exerciseIds),
-        }));
-
-        const icsContent = generateIcsCalendar(payloads);
-        downloadIcsFile(`reboundfit-week-${selectedMonday}.ics`, icsContent);
-
         setSyncStatus({
-          type: "info",
-          message: "Downloaded .ics calendar file! To sync directly to your Google account with 1 tap, click 'Connect Google Cal'.",
+          type: "error",
+          message: err.message || "Failed to sync with Google Calendar.",
         });
       }
-    } catch (err: any) {
-      setSyncStatus({
-        type: "error",
-        message: err.message || "Failed to sync with Google Calendar.",
-      });
     } finally {
       setIsSyncingGCal(false);
     }
@@ -476,10 +521,10 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
       const { data: { session } } = await supabase.auth.getSession();
       const token = getStoredGoogleProviderToken(session);
       if (!token) {
+        setHasGoogleToken(false);
         setSyncStatus({
-          type: "info",
-          message:
-            "Google Calendar token not detected. Tap 'Connect Google Cal' to grant access to your Google account.",
+          type: "error",
+          message: "Please reconnect Google Calendar to grant event access.",
         });
         setIsImportingGCal(false);
         return;
@@ -495,13 +540,27 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
         setImportedCalendarEvents(res.events);
         setAutoFitNotice(`✓ Imported ${res.events.length} Google Calendar commitments for this week!`);
       } else {
-        setSyncStatus({
-          type: "error",
-          message: res.error || "Could not retrieve Google Calendar events.",
-        });
+        if (
+          res.error?.includes("401") ||
+          res.error?.includes("403") ||
+          res.error?.toLowerCase().includes("permission") ||
+          res.error?.toLowerCase().includes("scope")
+        ) {
+          setHasGoogleToken(false);
+          setSyncStatus({
+            type: "error",
+            message: "Please reconnect Google Calendar to grant event access.",
+          });
+        } else {
+          setSyncStatus({
+            type: "error",
+            message: res.error || "Could not retrieve Google Calendar events.",
+          });
+        }
       }
     } catch (err: any) {
-      setSyncStatus({ type: "error", message: err.message || "OAuth calendar fetch failed." });
+      setHasGoogleToken(false);
+      setSyncStatus({ type: "error", message: "Please reconnect Google Calendar to grant event access." });
     } finally {
       setIsImportingGCal(false);
     }

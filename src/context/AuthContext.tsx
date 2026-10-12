@@ -399,7 +399,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             prompt: "consent select_account",
             access_type: "offline",
           },
-          scopes: "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly",
+          scopes: "https://www.googleapis.com/auth/calendar.events",
           redirectTo: redirectUrl,
         },
       });
