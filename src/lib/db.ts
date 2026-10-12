@@ -12,6 +12,7 @@ export interface LocalProfile {
   currentWeightLbs: number;
   activityLevel: 'sedentary' | 'light' | 'moderate' | 'very_active' | 'extra_active';
   unitPreference: 'imperial' | 'metric';
+  weightUnit?: 'lbs' | 'kg';
   primaryGoal: 'lean_bulk' | 'recomp';
   targetGainRateLbsPerWeek: number;
   trainingSplit: 'ppl' | 'upper_lower' | 'full_body' | 'custom';

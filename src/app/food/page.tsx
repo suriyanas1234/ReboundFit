@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { useCloudSync } from "@/hooks/useCloudSync";
 import { db, LocalMealLog } from "@/lib/db";
+import { MealModal } from "@/components/dashboard/MealModal";
 import {
   Flame,
   UtensilsCrossed,
@@ -365,125 +366,11 @@ export default function NutritionPage() {
       {/* =========================================================================
           LOG MEAL ACTION SHEET MODAL
           ========================================================================= */}
-      {isLogModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
-          <div className="w-full max-w-lg rounded-t-[28px] sm:rounded-3xl bg-[#1C1C1E] border border-[#38383A] p-6 shadow-2xl space-y-4 animate-slide-up pb-safe">
-            <div className="sm:hidden w-10 h-1 bg-[#38383A] rounded-full mx-auto -mt-2 mb-2" />
-
-            <div className="flex items-center justify-between pb-3 border-b border-[#2C2C2E]">
-              <div className="flex items-center space-x-2">
-                <div className="w-7 h-7 rounded-lg bg-[#FF9500]/20 text-[#FF9500] flex items-center justify-center">
-                  <Flame className="w-4 h-4 fill-current" />
-                </div>
-                <h3 className="text-lg font-bold text-white tracking-tight">Log Meal Intake</h3>
-              </div>
-              <button
-                onClick={() => setIsLogModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-[#2C2C2E] text-[#8E8E93] hover:text-white flex items-center justify-center"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-semibold text-[#8E8E93] block mb-1">Meal Title</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Grilled Chicken & Rice"
-                  value={mealName}
-                  onChange={(e) => setMealName(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl bg-[#2C2C2E] border border-[#38383A] text-sm text-white focus:outline-none focus:border-[#FF9500]"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-[#8E8E93] block mb-1">Category</label>
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
-                  {MEAL_CATEGORIES.map(({ type, label }) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() => setMealType(type)}
-                      className={`py-2 rounded-xl text-xs font-semibold transition-all ${
-                        mealType === type
-                          ? "bg-[#FF9500] text-black shadow-md shadow-[#FF9500]/20 font-bold"
-                          : "bg-[#2C2C2E] text-[#8E8E93] hover:text-white"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Macro Inputs */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
-                <div className="p-3 rounded-xl bg-[#2C2C2E] border border-[#38383A]">
-                  <label className="text-[10px] font-mono text-[#FF9500] uppercase block">Calories</label>
-                  <input
-                    type="number"
-                    value={calories}
-                    onChange={(e) => setCalories(Number(e.target.value))}
-                    className="w-full bg-transparent text-lg font-bold font-mono text-white focus:outline-none"
-                  />
-                  <span className="text-[10px] text-[#8E8E93]">kcal</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-[#2C2C2E] border border-[#38383A]">
-                  <label className="text-[10px] font-mono text-[#FF2D55] uppercase block">Protein</label>
-                  <input
-                    type="number"
-                    value={proteinG}
-                    onChange={(e) => setProteinG(Number(e.target.value))}
-                    className="w-full bg-transparent text-lg font-bold font-mono text-white focus:outline-none"
-                  />
-                  <span className="text-[10px] text-[#8E8E93]">grams</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-[#2C2C2E] border border-[#38383A]">
-                  <label className="text-[10px] font-mono text-[#30D158] uppercase block">Carbs</label>
-                  <input
-                    type="number"
-                    value={carbG}
-                    onChange={(e) => setCarbG(Number(e.target.value))}
-                    className="w-full bg-transparent text-lg font-bold font-mono text-white focus:outline-none"
-                  />
-                  <span className="text-[10px] text-[#8E8E93]">grams</span>
-                </div>
-
-                <div className="p-3 rounded-xl bg-[#2C2C2E] border border-[#38383A]">
-                  <label className="text-[10px] font-mono text-[#0A84FF] uppercase block">Fat</label>
-                  <input
-                    type="number"
-                    value={fatG}
-                    onChange={(e) => setFatG(Number(e.target.value))}
-                    className="w-full bg-transparent text-lg font-bold font-mono text-white focus:outline-none"
-                  />
-                  <span className="text-[10px] text-[#8E8E93]">grams</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-end space-x-2 pt-3 border-t border-[#2C2C2E]">
-              <button
-                type="button"
-                onClick={() => setIsLogModalOpen(false)}
-                className="px-4 py-2.5 rounded-xl text-xs font-semibold text-[#8E8E93] hover:text-white"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveMeal}
-                className="px-6 py-2.5 rounded-xl bg-[#FF9500] text-black font-extrabold text-xs shadow-lg shadow-[#FF9500]/20 active:scale-95 transition-all"
-              >
-                Log to HealthKit
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <MealModal
+        isOpen={isLogModalOpen}
+        onClose={() => setIsLogModalOpen(false)}
+        onMealLogged={loadMeals}
+      />
     </div>
   );
 }

@@ -44,31 +44,33 @@ export function WeightTrendChart({ data, onOpenWeighIn }: WeightTrendChartProps)
   if (data.length === 1) {
     return (
       <div className="rounded-3xl bg-surface border border-surface-border p-6 shadow-xl space-y-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs font-mono uppercase tracking-wider text-gray-400">
-                Baseline Established
-              </span>
-              <span className="px-2 py-0.5 rounded-full bg-brand-cyan/15 text-brand-cyan text-[10px] font-mono">
-                Day 1
-              </span>
-            </div>
-            <div className="flex items-baseline space-x-3 mt-1">
-              <h3 className="text-2xl font-black text-white font-mono">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[#2C2C2E]">
+          {/* Left side: Large weight readout with clean sub-label */}
+          <div className="flex flex-col">
+            <span className="text-xs font-mono uppercase tracking-wider text-[#8E8E93]">
+              Baseline Established
+            </span>
+            <div className="flex items-baseline space-x-2 mt-1">
+              <h3 className="text-3xl font-extrabold text-white font-mono tracking-tight">
                 {Number(latest.rawWeightLbs || 0).toFixed(1)} lbs
               </h3>
-              <span className="text-xs text-gray-400 font-mono">Starting Weight</span>
+              <span className="text-xs text-[#8E8E93] font-mono">Starting Weight</span>
             </div>
           </div>
 
-          <button
-            onClick={onOpenWeighIn}
-            className="flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-surface-elevated border border-surface-border hover:border-brand-cyan/40 text-xs font-semibold text-white transition-all active:scale-95"
-          >
-            <Plus className="w-4 h-4 text-brand-cyan" />
-            <span>Update Today</span>
-          </button>
+          {/* Right side: Day badge stacked neatly above pill-shaped + Update Today button */}
+          <div className="flex sm:flex-col items-center sm:items-end justify-between sm:justify-center gap-2">
+            <span className="px-2.5 py-0.5 rounded-full bg-[#0A84FF]/15 text-[#0A84FF] text-xs font-mono font-bold">
+              Day 1
+            </span>
+            <button
+              onClick={onOpenWeighIn}
+              className="flex items-center justify-center space-x-1.5 px-3.5 py-2 rounded-xl bg-[#2C2C2E] border border-[#38383A] hover:border-[#0A84FF] text-xs font-semibold text-white transition-all active:scale-95 shadow-md"
+            >
+              <Plus className="w-4 h-4 text-[#0A84FF]" />
+              <span>+ Update Today</span>
+            </button>
+          </div>
         </div>
 
         <div className="p-6 rounded-2xl bg-surface-elevated/50 border border-dashed border-surface-border flex flex-col items-center justify-center text-center space-y-2">

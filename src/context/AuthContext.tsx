@@ -41,6 +41,7 @@ interface AuthContextType {
   signInWithEmail: (email: string) => Promise<{ success: boolean; message: string; error?: string }>;
   signOut: () => Promise<void>;
   completeOnboarding: (data: OnboardingFormValues) => Promise<void>;
+  updateProfile: (updates: Partial<LocalProfile>) => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
 
@@ -559,6 +560,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setProfile(newProfile);
   };
 
+  const updateProfile = async (updates: Partial<LocalProfile>) => {
+    if (!profile || !user) return;
+    const updated: LocalProfile = {
+      ...profile,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    await db.profiles.put(updated);
+    saveProfileToLocalStorage(updated);
+    if (isSupabaseConfigured) {
+      await syncToSupabaseAuthMetadata(updated);
+      try {
+        await supabase.from("profiles").upsert({
+          id: user.id,
+          email: user.email,
+          display_name: updated.name || user.name,
+          height_cm: updated.heightCm,
+          activity_level: updated.activityLevel,
+          unit_preference: updated.weightUnit === "kg" ? "metric" : "imperial",
+          target_calories: updated.targetCalories,
+          target_protein_g: updated.targetProteinG,
+        });
+      } catch (e) {
+        console.warn("Supabase profiles upsert note:", e);
+      }
+    }
+    setProfile(updated);
+  };
+
   const hasCompletedOnboarding = Boolean(profile?.onboardingCompleted);
   const isAuthenticated = Boolean(user);
 
@@ -575,6 +605,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signInWithEmail,
         signOut,
         completeOnboarding,
+        updateProfile,
         refreshProfile,
       }}
     >

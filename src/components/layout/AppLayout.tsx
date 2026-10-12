@@ -26,6 +26,7 @@ import { useCloudSync } from "@/hooks/useCloudSync";
 import { AuthScreen } from "@/components/auth/AuthScreen";
 import { OnboardingWizard } from "@/components/onboarding/OnboardingWizard";
 import { QuickWeighInModal } from "@/components/dashboard/QuickWeighInModal";
+import { SettingsModal } from "@/components/settings/SettingsModal";
 import { ErrorBoundary } from "@/components/layout/ErrorBoundary";
 
 interface AppLayoutProps {
@@ -256,102 +257,12 @@ export function AppLayout({ children }: AppLayoutProps) {
       </div>
 
       {/* =========================================================================
-          APPLE HEALTH PROFILE ACTION SHEET / MODAL
+          APPLE HEALTH SETTINGS MODAL
           ========================================================================= */}
-      {isProfileSheetOpen && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/75 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
-          <div className="w-full max-w-md rounded-t-[28px] sm:rounded-3xl bg-[#1C1C1E] border border-[#38383A] p-6 shadow-2xl space-y-5 animate-slide-up pb-safe">
-            {/* Grab handle on mobile */}
-            <div className="sm:hidden w-10 h-1 bg-[#38383A] rounded-full mx-auto -mt-2 mb-3" />
-
-            <div className="flex items-center justify-between pb-3 border-b border-[#38383A]">
-              <div className="flex items-center space-x-3">
-                <div className="w-12 h-12 rounded-full bg-[#0A84FF] text-white flex items-center justify-center text-lg font-bold shadow-lg">
-                  {userInitial}
-                </div>
-                <div className="min-w-0">
-                  <h3 className="text-lg font-bold text-white tracking-tight truncate">
-                    {user?.name || "Athlete"}
-                  </h3>
-                  <p className="text-xs text-[#8E8E93] truncate">{user?.email}</p>
-                </div>
-              </div>
-
-              <button
-                onClick={() => setIsProfileSheetOpen(false)}
-                className="w-8 h-8 rounded-full bg-[#2C2C2E] text-[#8E8E93] hover:text-white flex items-center justify-center transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Profile Health Metrics Summary */}
-            <div className="space-y-2">
-              <span className="text-xs font-semibold text-[#8E8E93] uppercase tracking-wider">
-                HealthKit Profile Targets
-              </span>
-              <div className="p-4 rounded-2xl bg-[#2C2C2E] border border-[#38383A] divide-y divide-[#38383A]">
-                <div className="flex items-center justify-between py-2 text-xs">
-                  <span className="text-[#8E8E93]">Primary Goal</span>
-                  <span className="font-semibold text-white capitalize">
-                    {profile?.primaryGoal === "recomp" ? "Body Recomposition" : "Lean Bulking"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between py-2 text-xs">
-                  <span className="text-[#8E8E93]">Dynamic Calorie Target</span>
-                  <span className="font-semibold text-[#FF9500] font-mono">
-                    {profile?.targetCalories || 2600} kcal / day
-                  </span>
-                </div>
-                <div className="flex items-center justify-between py-2 text-xs">
-                  <span className="text-[#8E8E93]">Protein Target</span>
-                  <span className="font-semibold text-[#FF2D55] font-mono">
-                    {profile?.targetProteinG || 160} g / day
-                  </span>
-                </div>
-                <div className="flex items-center justify-between py-2 text-xs">
-                  <span className="text-[#8E8E93]">Training Split</span>
-                  <span className="font-semibold text-[#0A84FF] uppercase font-mono">
-                    {profile?.trainingSplit || "PPL"} ({profile?.workoutDaysPerWeek || 6} days/wk)
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Manual Sync Cloud Button */}
-            <button
-              onClick={async () => {
-                await syncNow();
-              }}
-              disabled={isSyncing}
-              className="w-full py-3 rounded-2xl bg-[#2C2C2E] border border-[#38383A] text-white font-semibold text-xs flex items-center justify-center space-x-2 hover:bg-[#38383A] transition-all disabled:opacity-50"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin text-[#0A84FF]" : ""}`} />
-              <span>
-                {isSyncing
-                  ? "Syncing Cloud..."
-                  : lastSyncedAt
-                  ? `Sync Cloud (Last: ${lastSyncedAt.toLocaleTimeString()})`
-                  : "Sync Cloud Now"}
-              </span>
-            </button>
-
-            {/* Sign Out Button */}
-            <div className="pt-1">
-              <button
-                onClick={() => {
-                  setIsProfileSheetOpen(false);
-                  signOut();
-                }}
-                className="w-full py-3.5 rounded-2xl bg-[#FF2D55]/15 border border-[#FF2D55]/30 text-[#FF2D55] font-bold text-sm flex items-center justify-center space-x-2 active:scale-95 transition-all"
-              >
-                <LogOut className="w-4 h-4" />
-                <span>Sign Out of Apple Health Session</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <SettingsModal
+        isOpen={isProfileSheetOpen}
+        onClose={() => setIsProfileSheetOpen(false)}
+      />
 
       {/* Global Quick Weigh-In Modal */}
       <QuickWeighInModal

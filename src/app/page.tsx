@@ -8,6 +8,7 @@ import { db, LocalWeighIn, LocalMealLog, LocalScheduledWorkout } from "@/lib/db"
 import { calculateWeightTrend, SmoothedWeightPoint } from "@/algorithms/weightTrend";
 import { getOrCreateScheduledWorkoutForDate } from "@/algorithms/workoutScheduler";
 import { QuickWeighInModal } from "@/components/dashboard/QuickWeighInModal";
+import { SettingsModal } from "@/components/settings/SettingsModal";
 import { NutritionCard } from "@/components/dashboard/NutritionCard";
 import { WeightTrendCard } from "@/components/dashboard/WeightTrendCard";
 import { WorkoutCard } from "@/components/dashboard/WorkoutCard";
@@ -32,6 +33,7 @@ export default function SummaryPage() {
   const [todayMeals, setTodayMeals] = useState<LocalMealLog[]>([]);
   const [todayWorkout, setTodayWorkout] = useState<LocalScheduledWorkout | null>(null);
   const [isWeighInOpen, setIsWeighInOpen] = useState<boolean>(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
   const todayStr = new Date().toISOString().split("T")[0]; // "2026-10-11"
@@ -159,10 +161,16 @@ export default function SummaryPage() {
             <span>{isSyncing ? "Syncing..." : "Sync"}</span>
           </button>
 
-          {/* Circular Profile Avatar */}
-          <div className="w-10 h-10 rounded-full bg-[#2C2C2E] border border-[#38383A] flex items-center justify-center font-bold text-sm text-white shadow-md">
+          {/* Circular Profile Avatar (Triggers Settings Modal) */}
+          <button
+            type="button"
+            onClick={() => setIsSettingsOpen(true)}
+            className="w-10 h-10 rounded-full bg-[#2C2C2E] border border-[#38383A] flex items-center justify-center font-bold text-sm text-white shadow-md hover:ring-2 hover:ring-[#0A84FF] active:scale-95 transition-all cursor-pointer"
+            title="Health Profile & Settings"
+            aria-label="Open Health Profile and Settings"
+          >
             {userInitial}
-          </div>
+          </button>
         </div>
       </header>
 
@@ -266,6 +274,12 @@ export default function SummaryPage() {
         onClose={() => setIsWeighInOpen(false)}
         lastWeightLbs={latestTrendPoint.trendWeightLbs}
         onWeightLogged={loadSummaryData}
+      />
+
+      {/* Dedicated Settings & Health Profile Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
       />
     </div>
   );
