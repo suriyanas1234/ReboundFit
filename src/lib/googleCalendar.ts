@@ -48,6 +48,20 @@ export interface DayCalendarAnalysis {
 }
 
 /**
+ * Retrieves the Google OAuth provider token from session or cookie.
+ */
+export function getStoredGoogleProviderToken(session?: any): string | null {
+  if (session?.provider_token) return session.provider_token;
+  if (typeof document !== "undefined") {
+    const match = document.cookie.match(/(?:^|; )google_provider_token=([^;]*)/);
+    if (match && match[1]) {
+      return decodeURIComponent(match[1]);
+    }
+  }
+  return null;
+}
+
+/**
  * Builds a direct Google Calendar web intent URL that opens Google Calendar
  * with the workout session pre-populated and ready to save.
  */

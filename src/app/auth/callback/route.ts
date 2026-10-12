@@ -14,10 +14,26 @@ export async function GET(request: Request) {
 
       if (!error && data?.user) {
         // Exchange succeeded and user session is active.
-        // Redirect directly to the requested destination (default: /).
-        // AppShell handles gating: if onboarding is complete, dashboard loads;
-        // if not completed yet, the onboarding wizard is presented cleanly.
-        return NextResponse.redirect(`${origin}${next}`);
+        const response = NextResponse.redirect(`${origin}${next}`);
+        if (data.session?.provider_token) {
+          response.cookies.set("google_provider_token", data.session.provider_token, {
+            path: "/",
+            httpOnly: false,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax",
+            maxAge: 3600 * 24 * 7,
+          });
+        }
+        if (data.session?.provider_refresh_token) {
+          response.cookies.set("google_provider_refresh_token", data.session.provider_refresh_token, {
+            path: "/",
+            httpOnly: false,
+            secure: process.env.NODE_ENV === "production",
+            sameSite: "lax",
+            maxAge: 3600 * 24 * 30,
+          });
+        }
+        return response;
       }
 
       if (error) {

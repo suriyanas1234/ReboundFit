@@ -378,10 +378,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         provider: "google",
         options: {
           queryParams: {
-            prompt: "select_account",
+            prompt: "consent select_account",
             access_type: "offline",
           },
-          scopes: "https://www.googleapis.com/auth/calendar.events",
+          scopes: "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly",
           redirectTo: redirectUrl,
         },
       });

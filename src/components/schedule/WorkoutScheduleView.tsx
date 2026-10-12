@@ -19,6 +19,7 @@ import {
   downloadIcsFile,
   createGoogleCalendarApiEvent,
   fetchGoogleCalendarEvents,
+  getStoredGoogleProviderToken,
   parseIcsContent,
   generateSampleCalendarEvents,
   analyzeDayCalendarAvailability,
@@ -66,7 +67,7 @@ const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frid
 const DAY_SHORT_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutScheduleViewProps) {
-  const { user, profile } = useAuth();
+  const { user, profile, signInWithGoogle } = useAuth();
   const [exercises, setExercises] = useState<LocalExercise[]>([]);
   const [scheduledWorkouts, setScheduledWorkouts] = useState<LocalScheduledWorkout[]>([]);
   const [selectedMonday, setSelectedMonday] = useState<string>(() => {
@@ -79,10 +80,41 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
 
   // Google Calendar Sync & Import States
   const [isSyncingGCal, setIsSyncingGCal] = useState<boolean>(false);
+  const [hasGoogleToken, setHasGoogleToken] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<{
     type: "success" | "error" | "info";
     message: string;
   } | null>(null);
+
+  useEffect(() => {
+    const checkToken = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = getStoredGoogleProviderToken(session);
+      setHasGoogleToken(!!token);
+    };
+    checkToken();
+  }, [user]);
+
+  const handleConnectGoogleCalendar = async () => {
+    setIsSyncingGCal(true);
+    setSyncStatus(null);
+    try {
+      const res = await signInWithGoogle();
+      if (res?.error) {
+        setSyncStatus({
+          type: "error",
+          message: res.error,
+        });
+        setIsSyncingGCal(false);
+      }
+    } catch (err: any) {
+      setSyncStatus({
+        type: "error",
+        message: err.message || "Failed to initiate Google Calendar connection.",
+      });
+      setIsSyncingGCal(false);
+    }
+  };
 
   // Frequency & Custom Days Modal
   const [isFrequencyModalOpen, setIsFrequencyModalOpen] = useState<boolean>(false);
@@ -248,9 +280,10 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
 
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const providerToken = session?.provider_token;
+      const providerToken = getStoredGoogleProviderToken(session);
 
       if (providerToken) {
+        setHasGoogleToken(true);
         let successCount = 0;
         for (const w of workoutDays) {
           const names = getExerciseNames(w.exerciseIds);
@@ -273,7 +306,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
 
         setSyncStatus({
           type: "success",
-          message: `✓ Successfully synced ${successCount} workouts directly to your Google Calendar!`,
+          message: `✓ Successfully synced ${successCount} workouts directly into your Google Calendar!`,
         });
       } else {
         const payloads: CalendarEventPayload[] = workoutDays.map((w) => ({
@@ -289,8 +322,8 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
         downloadIcsFile(`reboundfit-week-${selectedMonday}.ics`, icsContent);
 
         setSyncStatus({
-          type: "success",
-          message: "✓ Generated & downloaded Google Calendar schedule (.ics). Open it to import all workouts!",
+          type: "info",
+          message: "Downloaded .ics calendar file! To sync directly to your Google account with 1 tap, click 'Connect Google Cal'.",
         });
       }
     } catch (err: any) {
@@ -409,16 +442,17 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
     setAutoFitNotice(null);
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      const token = session?.provider_token;
+      const token = getStoredGoogleProviderToken(session);
       if (!token) {
         setSyncStatus({
           type: "info",
           message:
-            "No active Google Calendar token found. Sign in with Google to sync directly or use the '.ics File' / 'Demo Schedule' option below.",
+            "Google Calendar token not detected. Tap 'Connect Google Cal' to grant access to your Google account.",
         });
         setIsImportingGCal(false);
         return;
       }
+      setHasGoogleToken(true);
 
       const weekDates = generateDateRange(selectedMonday, 7);
       const minIso = `${weekDates[0]}T00:00:00Z`;
@@ -602,6 +636,24 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
             <span>Calendar Availability & Fit</span>
           </button>
 
+          {/* Connect Google Calendar (if not yet authorized) or Connected Badge */}
+          {!hasGoogleToken ? (
+            <button
+              onClick={handleConnectGoogleCalendar}
+              disabled={isSyncingGCal}
+              className="flex items-center space-x-1.5 px-3.5 py-2.5 rounded-2xl bg-brand-cyan/10 hover:bg-brand-cyan/20 border border-brand-cyan/30 hover:border-brand-cyan text-xs font-bold text-brand-cyan transition-all active:scale-95 shadow-md disabled:opacity-50"
+              title="Connect Google Calendar for direct 1-tap sync and availability checks"
+            >
+              <Calendar className="w-4 h-4 text-brand-cyan" />
+              <span>Connect Google Cal</span>
+            </button>
+          ) : (
+            <div className="hidden sm:flex items-center space-x-1.5 px-3 py-2 rounded-2xl bg-brand-emerald/15 text-brand-emerald text-xs font-bold border border-brand-emerald/30 shadow-md">
+              <CheckCircle2 className="w-4 h-4 text-brand-emerald" />
+              <span>Google Cal Connected</span>
+            </div>
+          )}
+
           {/* Sync Week with Google Calendar */}
           <button
             onClick={handleSyncWholeWeekGoogleCalendar}
@@ -621,7 +673,7 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
       {/* Sync Status Banner */}
       {syncStatus && (
         <div
-          className={`p-4 rounded-2xl flex items-center justify-between text-xs border ${
+          className={`p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs border ${
             syncStatus.type === "success"
               ? "bg-brand-emerald/10 border-brand-emerald/30 text-brand-emerald"
               : syncStatus.type === "error"
@@ -635,14 +687,25 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
             ) : (
               <AlertCircle className="w-4 h-4 flex-shrink-0" />
             )}
-            <span className="font-medium">{syncStatus.message}</span>
+            <span className="font-medium leading-relaxed">{syncStatus.message}</span>
           </div>
-          <button
-            onClick={() => setSyncStatus(null)}
-            className="text-gray-400 hover:text-white p-1"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center space-x-2 self-end sm:self-auto">
+            {!hasGoogleToken && (
+              <button
+                type="button"
+                onClick={handleConnectGoogleCalendar}
+                className="px-3 py-1.5 rounded-xl bg-brand-cyan text-black font-extrabold text-xs shadow-md hover:opacity-90 active:scale-95 transition-all whitespace-nowrap"
+              >
+                Connect Google Calendar
+              </button>
+            )}
+            <button
+              onClick={() => setSyncStatus(null)}
+              className="text-gray-400 hover:text-white p-1"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -1164,21 +1227,37 @@ export function WorkoutScheduleView({ onStartScheduledWorkout }: WorkoutSchedule
                 1. Sync / Import Your Google Calendar:
               </span>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                {/* Option A: OAuth Direct Sync */}
-                <button
-                  type="button"
-                  onClick={handleFetchGoogleCalendarEventsOAuth}
-                  disabled={isImportingGCal}
-                  className="p-3 rounded-2xl bg-surface-elevated border border-surface-border hover:border-brand-cyan/50 text-left transition-all active:scale-95 disabled:opacity-50"
-                >
-                  <div className="flex items-center space-x-1.5 text-xs font-bold text-brand-cyan">
-                    <RefreshCw className={`w-3.5 h-3.5 ${isImportingGCal ? "animate-spin" : ""}`} />
-                    <span>Google OAuth Sync</span>
-                  </div>
-                  <div className="text-[10px] text-gray-400 mt-1">
-                    Direct sync with primary Google Calendar.
-                  </div>
-                </button>
+                {/* Option A: OAuth Direct Sync / Connect */}
+                {!hasGoogleToken ? (
+                  <button
+                    type="button"
+                    onClick={handleConnectGoogleCalendar}
+                    className="p-3 rounded-2xl bg-brand-cyan/10 border border-brand-cyan/40 hover:bg-brand-cyan/20 text-left transition-all active:scale-95"
+                  >
+                    <div className="flex items-center space-x-1.5 text-xs font-bold text-brand-cyan">
+                      <Calendar className="w-3.5 h-3.5 text-brand-cyan" />
+                      <span>Connect Google Cal</span>
+                    </div>
+                    <div className="text-[10px] text-gray-300 mt-1">
+                      Authorize Google account access.
+                    </div>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleFetchGoogleCalendarEventsOAuth}
+                    disabled={isImportingGCal}
+                    className="p-3 rounded-2xl bg-surface-elevated border border-surface-border hover:border-brand-cyan/50 text-left transition-all active:scale-95 disabled:opacity-50"
+                  >
+                    <div className="flex items-center space-x-1.5 text-xs font-bold text-brand-cyan">
+                      <RefreshCw className={`w-3.5 h-3.5 ${isImportingGCal ? "animate-spin" : ""}`} />
+                      <span>Fetch Google Events</span>
+                    </div>
+                    <div className="text-[10px] text-emerald-400 mt-1">
+                      ✓ Connected. Load commitments.
+                    </div>
+                  </button>
+                )}
 
                 {/* Option B: Upload .ics file */}
                 <label className="p-3 rounded-2xl bg-surface-elevated border border-surface-border hover:border-brand-cyan/50 text-left transition-all active:scale-95 cursor-pointer">

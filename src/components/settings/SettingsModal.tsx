@@ -13,9 +13,12 @@ import {
   Check,
   ShieldCheck,
   Sparkles,
+  Calendar,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useCloudSync } from "@/hooks/useCloudSync";
+import { supabase } from "@/lib/supabase";
+import { getStoredGoogleProviderToken } from "@/lib/googleCalendar";
 
 export interface SettingsModalProps {
   isOpen: boolean;
@@ -23,8 +26,21 @@ export interface SettingsModalProps {
 }
 
 export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
-  const { user, profile, updateProfile, signOut } = useAuth();
+  const { user, profile, updateProfile, signOut, signInWithGoogle } = useAuth();
   const { isSyncing, lastSyncedAt, isOnline, syncNow } = useCloudSync();
+  const [hasGoogleCalendarAccess, setHasGoogleCalendarAccess] = useState<boolean>(false);
+  const [isConnectingGCal, setIsConnectingGCal] = useState<boolean>(false);
+
+  useEffect(() => {
+    const checkToken = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const token = getStoredGoogleProviderToken(session);
+      setHasGoogleCalendarAccess(!!token);
+    };
+    if (isOpen) {
+      checkToken();
+    }
+  }, [user, isOpen]);
 
   // Local Form State
   const [displayName, setDisplayName] = useState<string>(profile?.name || user?.name || "Athlete");
@@ -176,6 +192,67 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                   <span>Sync</span>
                 </button>
               </div>
+            </div>
+          </div>
+
+          {/* =========================================================================
+              1.5 GOOGLE CALENDAR SYNCHRONIZATION
+              ========================================================================= */}
+          <div className="space-y-3">
+            <span className="text-[11px] font-bold text-[#8E8E93] uppercase tracking-wider block">
+              Google Calendar Synchronization
+            </span>
+            <div className="p-4 rounded-2xl bg-[#2C2C2E] border border-[#38383A] space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#0A84FF]/20 text-[#0A84FF] flex items-center justify-center">
+                    <Calendar className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-white flex items-center space-x-1.5">
+                      <span>Primary Google Calendar</span>
+                      {hasGoogleCalendarAccess ? (
+                        <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-full bg-[#30D158]/15 text-[#30D158] text-[9px] font-semibold">
+                          <Check className="w-2.5 h-2.5" />
+                          <span>Connected</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center space-x-1 px-1.5 py-0.5 rounded-full bg-[#FF9500]/15 text-[#FF9500] text-[9px] font-semibold">
+                          <span>Not Connected</span>
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-[#8E8E93] truncate max-w-[200px]">
+                      {user?.email || "Google Account"}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  disabled={isConnectingGCal}
+                  onClick={async () => {
+                    setIsConnectingGCal(true);
+                    try {
+                      await signInWithGoogle();
+                    } finally {
+                      setIsConnectingGCal(false);
+                    }
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl bg-[#0A84FF] hover:bg-[#0A84FF]/90 text-white text-xs font-bold transition-all shadow-md active:scale-95 disabled:opacity-50 flex items-center space-x-1"
+                >
+                  {isConnectingGCal ? (
+                    <>
+                      <RefreshCw className="w-3 h-3 animate-spin" />
+                      <span>Connecting...</span>
+                    </>
+                  ) : (
+                    <span>{hasGoogleCalendarAccess ? "Reconnect" : "Connect"}</span>
+                  )}
+                </button>
+              </div>
+              <p className="text-[11px] text-[#8E8E93] leading-relaxed pt-2 border-t border-[#38383A]">
+                Authorizes direct sync so your scheduled workouts appear in Google Calendar, and lets ReboundFit check your busy hours to auto-fit gym sessions.
+              </p>
             </div>
           </div>
 
